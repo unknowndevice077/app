@@ -1,0 +1,48 @@
+{
+  "project_info": {
+    "project_number": "610586505769",
+    "project_id": "studia-48762",
+    "storage_bucket": "studia-48762.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:610586505769:android:eb68d1b03efca15278e238",
+        "android_client_info": {
+          "package_name": "com.example.app"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyBCx9JNlybJC9VsncGs9j4l0D8F-B6Qlk0"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    },
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:610586505769:android:ecb5a90d71db2bc878e238",
+        "android_client_info": {
+          "package_name": "com.example.first"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyBCx9JNlybJC9VsncGs9j4l0D8F-B6Qlk0"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
