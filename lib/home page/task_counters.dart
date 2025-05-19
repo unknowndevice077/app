@@ -38,20 +38,23 @@ class Counters extends StatelessWidget {
 class CounterCard extends StatelessWidget {
   final String title;
   final String count;
-
+  final double width;
+  final double height;
   const CounterCard({
     super.key,
     required this.title,
     required this.count,
+    this.width = 100,
+    this.height = 100,
   });
 
   @override
   Widget build(BuildContext context) {
     return Container(
-      width: 100,
+      width: 110,
       height: 100,
       decoration: BoxDecoration(
-        color: Colors.orangeAccent,
+        color: const Color.fromARGB(255, 0, 0, 0),
         borderRadius: BorderRadius.circular(16),
         boxShadow: [
           BoxShadow(

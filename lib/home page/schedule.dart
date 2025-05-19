@@ -13,7 +13,7 @@ class _ClassSchedulePageState extends State<ClassSchedulePage> {
   List<Map<String, String>> classes = [];
 
   void _showAddClassForm() {
-    final _formKey = GlobalKey<FormState>();
+    final formKey = GlobalKey<FormState>();
     String title = '', teacher = '', time = '', date = '', room = '';
 
     showModalBottomSheet(
@@ -31,7 +31,7 @@ class _ClassSchedulePageState extends State<ClassSchedulePage> {
             top: 20,
           ),
           child: Form(
-            key: _formKey,
+            key: formKey,
             child: Wrap(
               children: [
                 const Text("Add Class", style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold)),

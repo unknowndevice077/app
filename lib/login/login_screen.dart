@@ -31,9 +31,11 @@ class _LoginScreenState extends State<LoginScreen> {
         email: emailController.text.trim(),
         password: passwordController.text.trim(),
       );
-    Navigator.of(context, rootNavigator: true).pop();
+      if (!mounted) return; // <-- Add this line
+      Navigator.of(context, rootNavigator: true).pop();
     } on FirebaseAuthException {
-      Navigator.of(context, rootNavigator: true).pop(); // Close the loading dialog
+      if (!mounted) return; // <-- Add this line
+      Navigator.of(context).pop(); // Close the loading dialog
       showError ('The email or password is incorrect. Please try again.');
     }
   }
