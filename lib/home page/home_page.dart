@@ -1,10 +1,11 @@
 import 'package:app/home%20page/navbar/classes.dart';
 import 'package:app/home%20page/navbar/notes.dart';
-import 'package:app/home%20page/navbar/calendar.dart';
+import 'package:app/home%20page/navbar/Events.dart';
+import 'package:app/home%20page/navbar/homecontent.dart'; // <-- Add this import
 import 'package:flutter/material.dart';
 import 'package:firebase_auth/firebase_auth.dart';
-
-
+import 'package:flutter/cupertino.dart';
+import 'package:app/home%20page/navbar/Study/study.dart'; // <-- Add this import
 class HomePage extends StatefulWidget {
   const HomePage({super.key});
 
@@ -15,9 +16,6 @@ class HomePage extends StatefulWidget {
 class _HomePageState extends State<HomePage> {
   int _selectedIndex = 0;
 
-
-
-  
   @override
   Widget build(BuildContext context) {
     Widget bodyContent;
@@ -61,139 +59,198 @@ class _HomePageState extends State<HomePage> {
         iconTheme: const IconThemeData(color: Colors.black),
         elevation: 0,
       );
-      bodyContent = Center(
-        child: Text(
-          'Home Content Here',
-          style: TextStyle(fontSize: 24, color: Colors.black),
-        ),
-      );
+      bodyContent = const Homecontent(); // <-- Show Homecontent here
     } else if (_selectedIndex == 1) {
       // Notes tab
       appBar = null; // Notes widget has its own AppBar
       bodyContent = Notes();
     } else if (_selectedIndex == 2) {
-
-      bodyContent = const Calendar();
-    } else {
+      bodyContent = const Study(); // Study is now center
+    } else if (_selectedIndex == 3) {
+      bodyContent = const Events();
+    } else if (_selectedIndex == 4) {
       bodyContent = const Classes();
+    } else {
+      bodyContent = const Study(); // <-- Add this line for Study tab
     }
 
     return Scaffold(
-      backgroundColor: Colors.white, // <-- Set background color to white
+      backgroundColor: Colors.white,
       appBar: appBar,
       body: bodyContent,
       endDrawer: Drawer(
         child: Container(
-          color: Colors.white, // <-- Set drawer background to white
+          color: Colors.white,
           child: ListView(
             padding: EdgeInsets.zero,
             children: [
               DrawerHeader(
                 decoration: const BoxDecoration(
-                  color: Colors.white, // <-- Set drawer header background to white
+                  color: Colors.white,
                 ),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
+                child: Row(
+                  crossAxisAlignment: CrossAxisAlignment.center,
                   children: [
                     CircleAvatar(
-                      radius: 30,
-                      backgroundImage: AssetImage(
-                        'lib/images/Finn The Human.jpg',
-                      ),
+                      radius: 34,
+                      backgroundImage: AssetImage('lib/images/Finn The Human.jpg'),
                     ),
-                    const SizedBox(height: 10),
-                    Text(
-                      'Hi, Jae',
-                      style: const TextStyle(
-                        color: Colors.black,
-                        fontSize: 18,
-                        fontWeight: FontWeight.bold,
-                      ),
-                    ),
-                    const SizedBox(height: 5),
-                    Text(
-                      FirebaseAuth.instance.currentUser!.email ?? '',
-                      style: const TextStyle(
-                        color: Colors.black54,
-                        fontSize: 14,
+                    const SizedBox(width: 18),
+                    Expanded(
+                      child: Column(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            'Hi, Jae',
+                            style: const TextStyle(
+                              color: Colors.black,
+                              fontSize: 20,
+                              fontWeight: FontWeight.bold,
+                              letterSpacing: 0.5,
+                            ),
+                          ),
+                          const SizedBox(height: 4),
+                          Text(
+                            FirebaseAuth.instance.currentUser?.email ?? '',
+                            style: const TextStyle(
+                              color: Colors.black54,
+                              fontSize: 14,
+                              fontWeight: FontWeight.w400,
+                              overflow: TextOverflow.ellipsis,
+                            ),
+                          ),
+                        ],
                       ),
                     ),
                   ],
                 ),
               ),
               ListTile(
-                leading: const Icon(Icons.home, color: Colors.black),
+                leading: const Icon(Icons.home_outlined, color: Colors.black),
                 title: const Text(
                   'Home',
-                  style: TextStyle(color: Colors.black),
+                  style: TextStyle(color: Colors.black, fontWeight: FontWeight.w500),
                 ),
                 onTap: () {
-                  Navigator.pop(context); // Close the drawer
+                  Navigator.pop(context);
                 },
               ),
               ListTile(
-                leading: const Icon(Icons.settings, color: Colors.black),
+                leading: const Icon(Icons.settings_outlined, color: Colors.black),
                 title: const Text(
                   'Settings',
-                  style: TextStyle(color: Colors.black),
+                  style: TextStyle(color: Colors.black, fontWeight: FontWeight.w500),
                 ),
                 onTap: () {
                   // Navigate to settings page
                 },
               ),
+              const Divider(height: 32, thickness: 1.2, indent: 18, endIndent: 18),
+              SizedBox(height: 500), // Adjust this value as needed for your layout
               ListTile(
                 leading: const Icon(Icons.logout, color: Colors.black),
                 title: const Text(
                   'Logout',
-                  style: TextStyle(color: Colors.black),
+                  style: TextStyle(color: Colors.black, fontWeight: FontWeight.w500),
                 ),
-                onTap: () {
-                  FirebaseAuth.instance.signOut();
-                  Navigator.pop(context); // Close the drawer
+                onTap: () async {
+                  final shouldLogout = await showDialog<bool>(
+                    context: context,
+                    builder: (context) => AlertDialog(
+                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(18)),
+                      title: const Text('Logout Confirmation'),
+                      content: const Text('Are you sure you want to logout?'),
+                      actions: [
+                        TextButton(
+                          onPressed: () => Navigator.of(context).pop(false),
+                          child: const Text('Cancel'),
+                        ),
+                        ElevatedButton(
+                          style: ElevatedButton.styleFrom(
+                            backgroundColor: Colors.red,
+                            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                          ),
+                          onPressed: () => Navigator.of(context).pop(true),
+                          child: const Text('Logout'),
+                        ),
+                      ],
+                    ),
+                  );
+                  if (shouldLogout == true) {
+                    FirebaseAuth.instance.signOut();
+                    Navigator.pop(context);
+                  }
                 },
               ),
+              const SizedBox(height: 24),
             ],
           ),
         ),
       ),
-      floatingActionButton:
-          _selectedIndex == 0
-              ? Padding(
-                padding: const EdgeInsets.only(bottom: 50),
-                child: FloatingActionButton(
-                  onPressed: () {
-                    // Implement your add class logic here
-                  },
-                  child: const Icon(Icons.add),
+      bottomNavigationBar: Container(
+        height: 90, // Navbar container height
+        decoration: BoxDecoration(
+          color: Colors.white,
+          borderRadius: const BorderRadius.only(
+            topLeft: Radius.circular(24),
+            topRight: Radius.circular(24),
+          ),
+          boxShadow: [
+            BoxShadow(
+              color: Colors.black.withOpacity(0.07),
+              blurRadius: 12,
+              offset: const Offset(0, -2),
+            ),
+          ],
+        ),
+        child: ClipRRect(
+          borderRadius: const BorderRadius.only(
+            topLeft: Radius.circular(24),
+            topRight: Radius.circular(24),
+          ),
+          child: Padding(
+            padding: const EdgeInsets.only(top: 10), // <-- Lower the icons
+            child: BottomNavigationBar(
+              currentIndex: _selectedIndex,
+              onTap: (index) {
+                setState(() {
+                  _selectedIndex = index;
+                });
+              },
+              type: BottomNavigationBarType.fixed,
+              backgroundColor: Colors.white,
+              selectedItemColor: Colors.black,
+              unselectedItemColor: Colors.grey[400],
+              selectedLabelStyle: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13),
+              unselectedLabelStyle: const TextStyle(fontWeight: FontWeight.normal, fontSize: 12),
+              elevation: 0,
+              showUnselectedLabels: true,
+              items: const [
+                BottomNavigationBarItem(
+                  icon: Icon(CupertinoIcons.home, size: 24),
+                  label: 'Home',
                 ),
-              )
-              : null,
-      bottomNavigationBar: BottomNavigationBar(
-        currentIndex: _selectedIndex,
-        onTap: (index) {
-          setState(() {
-            _selectedIndex = index;
-          });
-        },
-        type: BottomNavigationBarType.fixed,
-        items: const [
-          BottomNavigationBarItem(
-            icon: Icon(Icons.home, size: 22),
-            label: 'Home',
+                BottomNavigationBarItem(
+                  icon: Icon(CupertinoIcons.doc_text, size: 24),
+                  label: 'Notes',
+                ),
+                BottomNavigationBarItem(
+                  icon: Icon(CupertinoIcons.book, size: 24), // Study is now center
+                  label: 'Study',
+                ),
+                BottomNavigationBarItem(
+                  icon: Icon(CupertinoIcons.calendar, size: 24),
+                  label: 'Events', // <-- Changed from 'Calendar' to 'Events'
+                ),
+                BottomNavigationBarItem(
+                  icon: Icon(CupertinoIcons.collections, size: 24),
+                  label: 'Classes',
+                ),
+              ],
+            ),
           ),
-          BottomNavigationBarItem(
-            icon: Icon(Icons.note, size: 22),
-            label: 'Notes',
-          ),
-          BottomNavigationBarItem(
-            icon: Icon(Icons.calendar_today, size: 22),
-            label: 'Calendar',
-          ),
-          BottomNavigationBarItem(
-            icon: Icon(Icons.class_, size: 22),
-            label: 'Classes',
-          ),
-        ],
+        ),
       ),
     );
   }
