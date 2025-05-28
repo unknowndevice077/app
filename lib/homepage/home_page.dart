@@ -1,11 +1,12 @@
-import 'package:app/home%20page/navbar/classes.dart';
-import 'package:app/home%20page/navbar/notes.dart';
-import 'package:app/home%20page/navbar/Events.dart';
-import 'package:app/home%20page/navbar/homecontent.dart'; // <-- Add this import
+import 'navbar/classes.dart';
+import 'navbar/notes/notes.dart';
+import 'navbar/Events.dart'; 
+import 'navbar/homecontent.dart';
+import 'navbar/Study/study.dart';
 import 'package:flutter/material.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/cupertino.dart';
-import 'package:app/home%20page/navbar/Study/study.dart'; // <-- Add this import
+
 class HomePage extends StatefulWidget {
   const HomePage({super.key});
 
@@ -21,57 +22,42 @@ class _HomePageState extends State<HomePage> {
     Widget bodyContent;
     PreferredSizeWidget? appBar;
 
-    if (_selectedIndex == 0) {
-      // Home tab
-      appBar = AppBar(
-        backgroundColor: Colors.white,
-        title: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Row(
-              children: [
-                CircleAvatar(
-                  radius: 24,
-                  backgroundImage: AssetImage('lib/images/Finn The Human.jpg'),
-                ),
-                const SizedBox(width: 12),
-                Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    const Text(
-                      "Good morning",
-                      style: TextStyle(fontSize: 12, color: Colors.black),
-                    ),
-                    const Text(
-                      "Jae",
-                      style: TextStyle(
-                        fontWeight: FontWeight.bold,
-                        fontSize: 16,
-                        color: Colors.black,
-                      ),
-                    ),
-                  ],
-                ),
-              ],
-            ),
-          ],
+    // AppBar with menu icon always shown (except for Notes tab)
+    appBar = AppBar(
+      backgroundColor: Colors.white,
+      elevation: 0,
+      automaticallyImplyLeading: false,
+      title: const Text(''),
+      actions: [
+        Builder(
+          builder: (context) => IconButton(
+            icon: const Icon(Icons.menu, color: Colors.black),
+            tooltip: 'Open Menu',
+            onPressed: () {
+              Scaffold.of(context).openEndDrawer();
+            },
+          ),
         ),
-        iconTheme: const IconThemeData(color: Colors.black),
-        elevation: 0,
-      );
-      bodyContent = const Homecontent(); // <-- Show Homecontent here
+      ],
+    );
+
+    if (_selectedIndex == 0) {
+      bodyContent = const Homecontent();
     } else if (_selectedIndex == 1) {
-      // Notes tab
-      appBar = null; // Notes widget has its own AppBar
-      bodyContent = Notes();
+      appBar = null; // Notes has its own AppBar
+      bodyContent = const Notes();
     } else if (_selectedIndex == 2) {
-      bodyContent = const Study(); // Study is now center
+      appBar = null;
+      bodyContent = const Study();
     } else if (_selectedIndex == 3) {
+      appBar = null;
       bodyContent = const Events();
     } else if (_selectedIndex == 4) {
+      appBar = null;
       bodyContent = const Classes();
     } else {
-      bodyContent = const Study(); // <-- Add this line for Study tab
+      appBar = null;
+      bodyContent = const Study();
     }
 
     return Scaffold(
@@ -117,7 +103,6 @@ class _HomePageState extends State<HomePage> {
                               color: Colors.black54,
                               fontSize: 14,
                               fontWeight: FontWeight.w400,
-                              overflow: TextOverflow.ellipsis,
                             ),
                           ),
                         ],
@@ -147,7 +132,7 @@ class _HomePageState extends State<HomePage> {
                 },
               ),
               const Divider(height: 32, thickness: 1.2, indent: 18, endIndent: 18),
-              SizedBox(height: 500), // Adjust this value as needed for your layout
+              SizedBox(height: 500),
               ListTile(
                 leading: const Icon(Icons.logout, color: Colors.black),
                 title: const Text(
@@ -178,8 +163,14 @@ class _HomePageState extends State<HomePage> {
                     ),
                   );
                   if (shouldLogout == true) {
-                    FirebaseAuth.instance.signOut();
-                    Navigator.pop(context);
+                    await FirebaseAuth.instance.signOut();
+                    // ✅ Check mounted before navigation
+                    if (mounted) {
+                      Navigator.of(context).pushNamedAndRemoveUntil(
+                        '/login', 
+                        (route) => false, // Remove all previous routes
+                      );
+                    }
                   }
                 },
               ),
@@ -189,7 +180,7 @@ class _HomePageState extends State<HomePage> {
         ),
       ),
       bottomNavigationBar: Container(
-        height: 90, // Navbar container height
+        height: 90,
         decoration: BoxDecoration(
           color: Colors.white,
           borderRadius: const BorderRadius.only(
@@ -210,7 +201,7 @@ class _HomePageState extends State<HomePage> {
             topRight: Radius.circular(24),
           ),
           child: Padding(
-            padding: const EdgeInsets.only(top: 10), // <-- Lower the icons
+            padding: const EdgeInsets.only(top: 10),
             child: BottomNavigationBar(
               currentIndex: _selectedIndex,
               onTap: (index) {
@@ -236,12 +227,12 @@ class _HomePageState extends State<HomePage> {
                   label: 'Notes',
                 ),
                 BottomNavigationBarItem(
-                  icon: Icon(CupertinoIcons.book, size: 24), // Study is now center
+                  icon: Icon(CupertinoIcons.book, size: 24),
                   label: 'Study',
                 ),
                 BottomNavigationBarItem(
                   icon: Icon(CupertinoIcons.calendar, size: 24),
-                  label: 'Events', // <-- Changed from 'Calendar' to 'Events'
+                  label: 'Events',
                 ),
                 BottomNavigationBarItem(
                   icon: Icon(CupertinoIcons.collections, size: 24),

@@ -1,6 +1,6 @@
+import 'package:app/login/login_screen.dart';
 import 'package:app/login/registerpage.dart';
 import 'package:flutter/material.dart';
-import 'package:app/login/login_screen.dart';
 
 class LoginOrRegister extends StatefulWidget {
   const LoginOrRegister({super.key});
@@ -10,26 +10,26 @@ class LoginOrRegister extends StatefulWidget {
 }
 
 class _LoginOrRegisterState extends State<LoginOrRegister> {
-  bool showLoginScreen = true;
+  // Initially show login page
+  bool showLoginPage = true;
 
-void togglePages() {
+  // Toggle between login and register page
+  void togglePages() {
     setState(() {
-      showLoginScreen = !showLoginScreen;
+      showLoginPage = !showLoginPage;
     });
   }
 
-
   @override
   Widget build(BuildContext context) {
-    if(showLoginScreen) {
+    if (showLoginPage) {
       return LoginScreen(
-        onTap: togglePages,
+        onTap: togglePages, // ✅ Provide the required onTap function
       );
     } else {
-      return Registerpage(
-        OnTap: togglePages,
+      return RegisterPage(
+        onTap: togglePages, // ✅ Provide the required onTap function
       );
-
     }
   }
 }

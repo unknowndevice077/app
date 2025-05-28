@@ -11,6 +11,8 @@ class MyApp extends StatelessWidget {
 }
 */
 import 'package:app/login/Auth.dart';
+import 'package:app/homepage/home_page.dart';
+import 'package:app/login/login_screen.dart';
 import 'package:flutter/material.dart';
 import 'package:firebase_core/firebase_core.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
@@ -21,12 +23,11 @@ void main() async {
   await Firebase.initializeApp(
     options: DefaultFirebaseOptions.currentPlatform,
   );
-
   // Enable Firestore offline persistence
   FirebaseFirestore.instance.settings = const Settings(
     persistenceEnabled: true,
   );
-
+  
   runApp(const MyApp());
 }
 
@@ -36,6 +37,20 @@ class MyApp extends StatelessWidget {
   // This widget is the root of your application.
   @override
   Widget build(BuildContext context) {
-    return MaterialApp(debugShowCheckedModeBanner: false, home: Auth());
+    return MaterialApp(
+      debugShowCheckedModeBanner: false,
+      home: Auth(), // This handles the initial auth check
+      // ✅ ADD PROPER ROUTES TABLE
+      routes: {
+        '/login': (context) => LoginScreen(onTap: () {}),
+        '/home': (context) => const HomePage(),
+      },
+      // ✅ ADD onUnknownRoute for error handling
+      onUnknownRoute: (settings) {
+        return MaterialPageRoute(
+          builder: (context) => LoginScreen(onTap: () {}), // Fallback to login
+        );
+      },
+    );
   }
 }
