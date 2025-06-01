@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:app/homepage/navbar/Study/quiz/quiz_taking_screen.dart';
+import 'package:firebase_auth/firebase_auth.dart';
 
 class StudyQuizScreen extends StatefulWidget {
   const StudyQuizScreen({super.key});
@@ -37,10 +38,20 @@ class _StudyQuizScreenState extends State<StudyQuizScreen>
     super.dispose();
   }
 
+  // ❌ CURRENT: Uses global Classes collection
+  // final snapshot = await FirebaseFirestore.instance.collection('Classes').get();
+
+  // ✅ FIX: Use per-user Classes collection
   Future<void> _loadSubjects() async {
     try {
-      final snapshot =
-          await FirebaseFirestore.instance.collection('Classes').get();
+      final currentUserId = FirebaseAuth.instance.currentUser?.uid;
+      if (currentUserId == null) return;
+
+      final snapshot = await FirebaseFirestore.instance
+          .collection('users')
+          .doc(currentUserId)
+          .collection('Classes')
+          .get();
 
       setState(() {
         _subjects =
@@ -234,20 +245,7 @@ class _StudyQuizScreenState extends State<StudyQuizScreen>
                         child: Row(
                           mainAxisSize: MainAxisSize.min,
                           children: [
-                            Icon(
-                              Icons.quiz_outlined,
-                              size: isTablet ? 18 : 16,
-                              color: const Color(0xFF10B981),
-                            ),
-                            SizedBox(width: isTablet ? 8 : 6),
-                            Text(
-                              'Interactive',
-                              style: GoogleFonts.inter(
-                                fontSize: isTablet ? 14.0 : 12.0,
-                                fontWeight: FontWeight.w600,
-                                color: const Color(0xFF10B981),
-                              ),
-                            ),
+                     SizedBox(width: isTablet ? 8 : 6),
                           ],
                         ),
                       ),
@@ -760,8 +758,7 @@ class _ResponsiveSubjectCardState extends State<_ResponsiveSubjectCard>
             ),
           ),
         ),
-      ),
-    );
+      ));
   }
 }
 
@@ -805,24 +802,27 @@ class _TopicSelectionScreenState extends State<TopicSelectionScreen>
 
   Future<void> _loadTopics() async {
     try {
-      final snapshot =
-          await FirebaseFirestore.instance
-              .collection('Classes')
-              .doc(widget.subject['id'])
-              .collection('topics')
-              .get();
+      final currentUserId = FirebaseAuth.instance.currentUser?.uid;
+      if (currentUserId == null) return;
+
+      final snapshot = await FirebaseFirestore.instance
+          .collection('users')
+          .doc(currentUserId)
+          .collection('Classes')
+          .doc(widget.subject['id'])
+          .collection('topics')
+          .get();
 
       setState(() {
-        _topics =
-            snapshot.docs
-                .map(
-                  (doc) => {
-                    'id': doc.id,
-                    'title': doc.data()['title'] ?? 'Unknown Topic',
-                    'description': doc.data()['description'] ?? '',
-                  },
-                )
-                .toList();
+        _topics = snapshot.docs
+            .map(
+              (doc) => {
+                'id': doc.id,
+                'title': doc.data()['title'] ?? 'Unknown Topic',
+                'description': doc.data()['description'] ?? '',
+              },
+            )
+            .toList();
         _loading = false;
       });
       _animationController.forward();
@@ -1524,7 +1524,6 @@ class _ResponsiveTopicCardState extends State<_ResponsiveTopicCard>
             ],
           ),
         ),
-      ),
-    );
+      ));
   }
 }

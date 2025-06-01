@@ -15,6 +15,7 @@ class _LoginOrRegisterState extends State<LoginOrRegister> {
 
   // Toggle between login and register page
   void togglePages() {
+    print('🔄 Toggling pages. Current: ${showLoginPage ? "Login" : "Register"}, Switching to: ${showLoginPage ? "Register" : "Login"}'); // Debug
     setState(() {
       showLoginPage = !showLoginPage;
     });
@@ -22,13 +23,15 @@ class _LoginOrRegisterState extends State<LoginOrRegister> {
 
   @override
   Widget build(BuildContext context) {
+    print('📱 Building LoginOrRegister. Showing: ${showLoginPage ? "Login" : "Register"}'); // Debug
+    
     if (showLoginPage) {
       return LoginScreen(
-        onTap: togglePages, // ✅ Provide the required onTap function
+        onTap: togglePages,
       );
     } else {
       return RegisterPage(
-        onTap: togglePages, // ✅ Provide the required onTap function
+        onTap: togglePages,
       );
     }
   }

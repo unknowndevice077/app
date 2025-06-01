@@ -2,18 +2,19 @@ import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:firebase_ai/firebase_ai.dart';
+import 'package:firebase_auth/firebase_auth.dart';
 import 'dart:convert';
-
+import 'quiz_overview.dart';
 class QuizTakingScreen extends StatefulWidget {
   final List<Map<String, dynamic>> topics;
   final int questionCount;
-  final Map<String, dynamic> subject; // Add subject data to get color
+  final Map<String, dynamic> subject;
 
   const QuizTakingScreen({
     super.key,
     required this.topics,
     required this.questionCount,
-    required this.subject, // Add this parameter
+    required this.subject,
   });
 
   @override
@@ -43,23 +44,26 @@ class _QuizTakingScreenState extends State<QuizTakingScreen>
   Color get subjectColorLight => subjectColor.withOpacity(0.1);
   Color get subjectColorMedium => subjectColor.withOpacity(0.3);
 
+  // ✅ Quiz session tracking
+  String? _quizSessionId;
+  final List<Map<String, dynamic>> _quizResponses = [];
+  DateTime? _quizStartTime;
+  DateTime? _questionStartTime;
+
   @override
   void initState() {
     super.initState();
-    
-    // Main animation controller
+    _initializeQuizSession();
+
+    // Initialize animations
     _animationController = AnimationController(
       duration: const Duration(milliseconds: 800),
       vsync: this,
     );
-    
-    // Progress animation controller
     _progressController = AnimationController(
       duration: const Duration(milliseconds: 1000),
       vsync: this,
     );
-    
-    // Pulse animation controller
     _pulseController = AnimationController(
       duration: const Duration(milliseconds: 1500),
       vsync: this,
@@ -68,20 +72,16 @@ class _QuizTakingScreenState extends State<QuizTakingScreen>
     _fadeAnimation = Tween<double>(begin: 0.0, end: 1.0).animate(
       CurvedAnimation(parent: _animationController, curve: Curves.easeInOut),
     );
-    
     _slideAnimation = Tween<Offset>(
       begin: const Offset(0.3, 0.0),
       end: Offset.zero,
     ).animate(CurvedAnimation(parent: _animationController, curve: Curves.easeOutBack));
-    
     _progressAnimation = Tween<double>(begin: 0.0, end: 1.0).animate(
       CurvedAnimation(parent: _progressController, curve: Curves.easeInOut),
     );
-    
     _pulseAnimation = Tween<double>(begin: 0.8, end: 1.0).animate(
       CurvedAnimation(parent: _pulseController, curve: Curves.easeInOut),
     );
-    
     _scaleAnimation = Tween<double>(begin: 0.9, end: 1.0).animate(
       CurvedAnimation(parent: _animationController, curve: Curves.elasticOut),
     );
@@ -97,27 +97,109 @@ class _QuizTakingScreenState extends State<QuizTakingScreen>
     super.dispose();
   }
 
-  // ... (keep existing AI generation methods the same) ...
+  void _initializeQuizSession() {
+    _quizSessionId = FirebaseFirestore.instance.collection('quiz_sessions').doc().id;
+    _quizStartTime = DateTime.now();
+    _questionStartTime = DateTime.now();
+  }
+
+  // ✅ Method to fetch topic documents and content
+  Future<Map<String, String>> _getTopicDocuments(String topicId) async {
+    Map<String, String> documentContents = {};
+    
+    try {
+      final userId = FirebaseAuth.instance.currentUser?.uid;
+      if (userId == null) return documentContents;
+
+      // Get documents from the topic
+      final documentsSnapshot = await FirebaseFirestore.instance
+          .collection('users')
+          .doc(userId)
+          .collection('Classes')
+          .doc(widget.subject['classId'] ?? '')
+          .collection('topics')
+          .doc(topicId)
+          .collection('documents')
+          .get();
+
+      for (var doc in documentsSnapshot.docs) {
+        final data = doc.data();
+        final fileName = data['fileName'] ?? 'Unknown Document';
+        final content = data['content'] ?? '';
+        
+        if (content.isNotEmpty) {
+          documentContents[fileName] = content;
+        }
+      }
+
+      print('📄 Found ${documentContents.length} documents with content for topic');
+    } catch (e) {
+      print('❌ Error fetching documents: $e');
+    }
+
+    return documentContents;
+  }
+
+  // ✅ Enhanced AI question generation with document content
   Future<List<Map<String, dynamic>>> _generateQuestionsWithAI(
     String topicTitle,
+    String topicId,
     int questionsPerTopic,
   ) async {
     try {
+      setState(() {
+        _generatingQuestions = true;
+      });
+
+      // ✅ Fetch document contents for this topic
+      final documentContents = await _getTopicDocuments(topicId);
+      
       final model = FirebaseAI.googleAI().generativeModel(
         model: 'gemini-2.0-flash',
       );
+
+      // ✅ Build enhanced prompt with document content
+      String documentsContext = '';
+      if (documentContents.isNotEmpty) {
+        documentsContext = '\n\nRELEVANT DOCUMENTS AND MATERIALS:\n';
+        documentContents.forEach((fileName, content) {
+          documentsContext += '\n--- Document: $fileName ---\n';
+          // Limit content length to avoid token limits
+          final limitedContent = content.length > 3000 
+              ? '${content.substring(0, 3000)}...' 
+              : content;
+          documentsContext += '$limitedContent\n';
+        });
+        documentsContext += '\n--- End of Documents ---\n';
+      }
 
       final prompt = [
         Content.text('''
 Generate exactly $questionsPerTopic multiple choice quiz questions about the topic: "$topicTitle".
 
-Requirements:
-- Each question should be educational and test understanding of the topic
+${documentContents.isNotEmpty ? '''
+IMPORTANT: Base your questions on the provided documents and materials below. The questions should test understanding of the specific content, concepts, definitions, and information found in these documents.
+$documentsContext
+
+Generate questions that:
+- Use the illustrions in the documents to create context
+- Even if the title of the topic is random focus on the content of the documents
+- Test comprehension of the document content
+- Ask about specific facts, concepts, or procedures mentioned in the materials
+- Require understanding of the relationships between ideas in the documents
+- Cover key points and important details from the provided materials
+''' : '''
+IMPORTANT: Since no documents are provided, generate general educational questions about the topic "$topicTitle" that would be appropriate for academic study.
+'''}
+
+Requirements for ALL questions:
+- Each question should be educational and test understanding
 - Provide exactly 4 answer options (A, B, C, D) for each question
 - Mark one answer as correct
 - Questions should be at an appropriate academic level
-- Avoid overly easy or overly complex questions
 - Make distractors (wrong answers) plausible but clearly incorrect
+- Ensure questions are clear and unambiguous
+- Questions should be suitable for students studying this subject
 
 Format the response as a JSON array with this exact structure:
 [
@@ -130,10 +212,14 @@ Format the response as a JSON array with this exact structure:
 
 Topic: $topicTitle
 Number of questions needed: $questionsPerTopic
+${documentContents.isNotEmpty ? 'Questions should be based on the provided document content above.' : ''}
 
 Please ensure the JSON is valid and contains exactly $questionsPerTopic questions.
 '''),
       ];
+
+      print('🤖 Generating $questionsPerTopic questions for topic: $topicTitle');
+      print('📚 Using ${documentContents.length} documents as context');
 
       final response = await model.generateContent(prompt);
 
@@ -149,26 +235,33 @@ Please ensure the JSON is valid and contains exactly $questionsPerTopic question
 
         final List<dynamic> questionsJson = json.decode(jsonText);
 
-        return questionsJson
+        final generatedQuestions = questionsJson
             .map(
               (q) => {
                 'question': q['question']?.toString() ?? '',
                 'answers': List<String>.from(q['answers'] ?? []),
                 'correctAnswer': q['correctAnswer']?.toString() ?? '',
                 'topic': topicTitle,
+                'topicId': topicId,
                 'generated': true,
+                'basedOnDocuments': documentContents.isNotEmpty,
+                'documentCount': documentContents.length,
               },
             )
             .toList();
+
+        print('✅ Generated ${generatedQuestions.length} questions${documentContents.isNotEmpty ? ' based on documents' : ''}');
+        return generatedQuestions;
       }
     } catch (e) {
-      print('Error generating questions with AI: $e');
+      print('❌ Error generating questions with AI: $e');
       return _generateFallbackQuestions(topicTitle, questionsPerTopic);
     }
 
     return [];
   }
 
+  // Fallback question generation
   List<Map<String, dynamic>> _generateFallbackQuestions(
     String topicTitle,
     int count,
@@ -186,10 +279,13 @@ Please ensure the JSON is valid and contains exactly $questionsPerTopic question
         'correctAnswer': 'Option A for $topicTitle',
         'topic': topicTitle,
         'generated': true,
+        'basedOnDocuments': false,
+        'documentCount': 0,
       },
     );
   }
 
+  // ✅ Load questions with document-based generation
   Future<void> _loadQuestions() async {
     setState(() {
       _loading = true;
@@ -199,6 +295,7 @@ Please ensure the JSON is valid and contains exactly $questionsPerTopic question
     try {
       List<Map<String, dynamic>> allQuestions = [];
 
+      // First, try to load existing questions from Firebase
       for (var topic in widget.topics) {
         final snapshot = await FirebaseFirestore.instance
             .collection('questions')
@@ -213,11 +310,15 @@ Please ensure the JSON is valid and contains exactly $questionsPerTopic question
             'answers': List<String>.from(data['answers'] ?? []),
             'correctAnswer': data['correctAnswer'] ?? '',
             'topic': topic['title'],
-            'generated': false,
+            'topicId': topic['id'],
+            'generated': data['generated'] ?? false,
+            'basedOnDocuments': data['basedOnDocuments'] ?? false,
+            'documentCount': data['documentCount'] ?? 0,
           });
         }
       }
 
+      // If we don't have enough questions, generate new ones using AI + documents
       if (allQuestions.length < widget.questionCount) {
         setState(() {
           _generatingQuestions = true;
@@ -228,18 +329,21 @@ Please ensure the JSON is valid and contains exactly $questionsPerTopic question
 
         for (var topic in widget.topics) {
           final existingQuestionsForTopic =
-              allQuestions.where((q) => q['topic'] == topic['title']).length;
+              allQuestions.where((q) => q['topicId'] == topic['id']).length;
 
           if (existingQuestionsForTopic < questionsPerTopic) {
             final additionalNeeded = questionsPerTopic - existingQuestionsForTopic;
 
+            // ✅ Pass topic ID to enable document reading
             final aiQuestions = await _generateQuestionsWithAI(
               topic['title'],
+              topic['id'], // ✅ Pass topic ID
               additionalNeeded,
             );
 
             allQuestions.addAll(aiQuestions);
 
+            // Save generated questions to Firebase with document metadata
             for (var question in aiQuestions) {
               try {
                 await FirebaseFirestore.instance.collection('questions').add({
@@ -248,6 +352,8 @@ Please ensure the JSON is valid and contains exactly $questionsPerTopic question
                   'answers': question['answers'],
                   'correctAnswer': question['correctAnswer'],
                   'generated': true,
+                  'basedOnDocuments': question['basedOnDocuments'],
+                  'documentCount': question['documentCount'],
                   'createdAt': FieldValue.serverTimestamp(),
                 });
               } catch (e) {
@@ -288,24 +394,77 @@ Please ensure the JSON is valid and contains exactly $questionsPerTopic question
     }
   }
 
+  // ✅ Record answer and save to database
   void _selectAnswer(String answer) {
     if (!_answered) {
+      final questionEndTime = DateTime.now();
+      final timeSpent = questionEndTime.difference(_questionStartTime!).inSeconds;
+      final isCorrect = answer == _questions[_currentQuestionIndex]['correctAnswer'];
+      
       setState(() {
         _selectedAnswer = answer;
         _answered = true;
-        if (answer == _questions[_currentQuestionIndex]['correctAnswer']) {
+        if (isCorrect) {
           _score++;
         }
       });
+
+      // ✅ Record this response
+      final response = {
+        'questionIndex': _currentQuestionIndex,
+        'questionId': _questions[_currentQuestionIndex]['id'],
+        'question': _questions[_currentQuestionIndex]['question'],
+        'topicId': _questions[_currentQuestionIndex]['topicId'],
+        'topicTitle': _questions[_currentQuestionIndex]['topic'],
+        'selectedAnswer': answer,
+        'correctAnswer': _questions[_currentQuestionIndex]['correctAnswer'],
+        'isCorrect': isCorrect,
+        'timeSpent': timeSpent,
+        'answeredAt': questionEndTime,
+        'basedOnDocuments': _questions[_currentQuestionIndex]['basedOnDocuments'] ?? false,
+        'documentCount': _questions[_currentQuestionIndex]['documentCount'] ?? 0,
+      };
+
+      _quizResponses.add(response);
+
+      // ✅ Save individual response to database immediately
+      _saveQuestionResponse(response);
     }
   }
 
+  // ✅ Save individual question response
+  Future<void> _saveQuestionResponse(Map<String, dynamic> response) async {
+    try {
+      final userId = FirebaseAuth.instance.currentUser?.uid;
+      if (userId == null) return;
+
+      await FirebaseFirestore.instance
+          .collection('users')
+          .doc(userId)
+          .collection('quiz_responses')
+          .add({
+        'quizSessionId': _quizSessionId,
+        'classId': widget.subject['classId'],
+        'className': widget.subject['title'],
+        'classColor': widget.subject['color'],
+        ...response,
+        'createdAt': FieldValue.serverTimestamp(),
+      });
+
+      print('✅ Saved question response for question ${response['questionIndex'] + 1}');
+    } catch (e) {
+      print('❌ Error saving question response: $e');
+    }
+  }
+
+  // ✅ Next question with timing tracking
   void _nextQuestion() {
     if (_currentQuestionIndex < _questions.length - 1) {
       setState(() {
         _currentQuestionIndex++;
         _answered = false;
         _selectedAnswer = null;
+        _questionStartTime = DateTime.now(); // ✅ Reset question timer
       });
       _animationController.reset();
       _animationController.forward();
@@ -317,10 +476,16 @@ Please ensure the JSON is valid and contains exactly $questionsPerTopic question
     }
   }
 
+  // ✅ Enhanced results with database recording
   void _showResults() {
     final percentage = (_score / _questions.length * 100).round();
     final screenSize = MediaQuery.of(context).size;
     final isTablet = screenSize.width > 600;
+    final quizEndTime = DateTime.now();
+    final totalQuizTime = quizEndTime.difference(_quizStartTime!);
+
+    // ✅ Save complete quiz session
+    _saveCompleteQuizSession(percentage, totalQuizTime);
 
     showDialog(
       context: context,
@@ -330,231 +495,434 @@ Please ensure the JSON is valid and contains exactly $questionsPerTopic question
           borderRadius: BorderRadius.circular(isTablet ? 32 : 24),
         ),
         elevation: 20,
-        child: Container(
-          padding: EdgeInsets.all(isTablet ? 40 : 32),
-          decoration: BoxDecoration(
-            gradient: LinearGradient(
-              begin: Alignment.topLeft,
-              end: Alignment.bottomRight,
-              colors: [
-                Colors.white,
-                percentage >= 70 ? subjectColorLight : Colors.orange.withOpacity(0.05),
-              ],
-            ),
-            borderRadius: BorderRadius.circular(isTablet ? 32 : 24),
-          ),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              // Animated trophy/medal icon
-              TweenAnimationBuilder<double>(
-                duration: const Duration(milliseconds: 1000),
-                tween: Tween(begin: 0.0, end: 1.0),
-                builder: (context, value, child) {
-                  return Transform.scale(
-                    scale: value,
-                    child: Container(
-                      padding: EdgeInsets.all(isTablet ? 24 : 20),
-                      decoration: BoxDecoration(
-                        gradient: LinearGradient(
-                          colors: percentage >= 70 
-                              ? [subjectColor, subjectColor.withOpacity(0.7)]
-                              : [Colors.orange, Colors.orange.shade400],
-                        ),
-                        shape: BoxShape.circle,
-                        boxShadow: [
-                          BoxShadow(
-                            color: (percentage >= 70 ? subjectColor : Colors.orange).withOpacity(0.3),
-                            blurRadius: 20,
-                            offset: const Offset(0, 8),
-                          ),
-                        ],
-                      ),
-                      child: Icon(
-                        percentage >= 70 ? Icons.emoji_events : Icons.insights,
-                        color: Colors.white,
-                        size: isTablet ? 40 : 32,
-                      ),
-                    ),
-                  );
-                },
+        child: SingleChildScrollView(
+          child: Container(
+            padding: EdgeInsets.all(isTablet ? 25 : 20),
+            decoration: BoxDecoration(
+              gradient: LinearGradient(
+                begin: Alignment.topLeft,
+                end: Alignment.bottomRight,
+                colors: [
+                  Colors.blue[50]!, // very light blue
+                  Colors.blue[100]!, // light blue
+                ],
               ),
-              
-              SizedBox(height: isTablet ? 24 : 20),
-              
-              // Title with gradient text
-              ShaderMask(
-                shaderCallback: (bounds) => LinearGradient(
-                  colors: percentage >= 70 
-                      ? [subjectColor, subjectColor.withOpacity(0.7)]
-                      : [Colors.orange, Colors.orange.shade700],
-                ).createShader(bounds),
-                child: Text(
+              borderRadius: BorderRadius.circular(isTablet ? 32 : 24),
+            ),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.center,
+              children: [
+                // Trophy icon with blue circle
+                TweenAnimationBuilder<double>(
+                  duration: const Duration(milliseconds: 1000),
+                  tween: Tween(begin: 0.0, end: 1.0),
+                  builder: (context, value, child) {
+                    return Transform.scale(
+                      scale: value,
+                      child: Container(
+                        padding: EdgeInsets.all(isTablet ? 24 : 20),
+                        decoration: BoxDecoration(
+                          color: subjectColor, // solid blue
+                          shape: BoxShape.circle,
+                          boxShadow: [
+                            BoxShadow(
+                              color: subjectColor.withOpacity(0.3),
+                              blurRadius: 20,
+                              offset: const Offset(0, 8),
+                            ),
+                          ],
+                        ),
+                        child: Icon(
+                          Icons.emoji_events,
+                          color: Colors.white,
+                          size: isTablet ? 40 : 32,
+                        ),
+                      ),
+                    );
+                  },
+                ),
+                SizedBox(height: isTablet ? 24 : 20),
+
+                // Title with strong contrast
+                Text(
                   'Quiz Complete!',
                   style: GoogleFonts.inter(
                     fontSize: isTablet ? 32 : 28,
                     fontWeight: FontWeight.w800,
-                    color: Colors.white,
+                    color: subjectColor, // strong blue
                   ),
                   textAlign: TextAlign.center,
                 ),
-              ),
-              
-              SizedBox(height: isTablet ? 32 : 24),
-              
-              // Score display with circular progress
-              SizedBox(
-                width: isTablet ? 180 : 150,
-                height: isTablet ? 180 : 150,
-                child: Stack(
-                  alignment: Alignment.center,
-                  children: [
-                    // Circular progress indicator
-                    TweenAnimationBuilder<double>(
-                      duration: const Duration(milliseconds: 1500),
-                      tween: Tween(begin: 0.0, end: percentage / 100),
-                      curve: Curves.easeOutCubic,
-                      builder: (context, value, child) {
-                        return SizedBox(
-                          width: isTablet ? 180 : 150,
-                          height: isTablet ? 180 : 150,
-                          child: CircularProgressIndicator(
-                            value: value,
-                            strokeWidth: isTablet ? 12 : 10,
-                            backgroundColor: Colors.grey[200],
-                            valueColor: AlwaysStoppedAnimation<Color>(
-                              percentage >= 70 ? subjectColor : Colors.orange,
+
+                SizedBox(height: isTablet ? 32 : 24),
+
+                // Score display with circular progress
+                SizedBox(
+                  width: isTablet ? 180 : 150,
+                  height: isTablet ? 180 : 150,
+                  child: Stack(
+                    alignment: Alignment.center,
+                    children: [
+                      TweenAnimationBuilder<double>(
+                        duration: const Duration(milliseconds: 1500),
+                        tween: Tween(begin: 0.0, end: percentage / 100),
+                        curve: Curves.easeOutCubic,
+                        builder: (context, value, child) {
+                          return SizedBox(
+                            width: isTablet ? 180 : 150,
+                            height: isTablet ? 180 : 150,
+                            child: CircularProgressIndicator(
+                              value: value,
+                              strokeWidth: isTablet ? 12 : 10,
+                              backgroundColor: Colors.blue[100],
+                              valueColor: AlwaysStoppedAnimation<Color>(
+                                subjectColor,
+                              ),
+                            ),
+                          );
+                        },
+                      ),
+                      // Score text
+                      Column(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          TweenAnimationBuilder<int>(
+                            duration: const Duration(milliseconds: 1500),
+                            tween: IntTween(begin: 0, end: _score),
+                            builder: (context, value, child) {
+                              return Text(
+                                '$value/${_questions.length}',
+                                style: GoogleFonts.inter(
+                                  fontSize: isTablet ? 28 : 24,
+                                  fontWeight: FontWeight.w700,
+                                  color: subjectColor,
+                                ),
+                              );
+                            },
+                          ),
+                          Text(
+                            '$percentage%',
+                            style: GoogleFonts.inter(
+                              fontSize: isTablet ? 18 : 16,
+                              fontWeight: FontWeight.w600,
+                              color: Colors.grey[700],
                             ),
                           ),
-                        );
-                      },
+                        ],
+                      ),
+                    ],
+                  ),
+                ),
+
+                SizedBox(height: isTablet ? 32 : 24),
+
+                // Motivational message
+                Container(
+                  padding: EdgeInsets.all(isTablet ? 20 : 16),
+                  decoration: BoxDecoration(
+                    color: subjectColor.withOpacity(0.08),
+                    borderRadius: BorderRadius.circular(16),
+                    border: Border.all(
+                      color: subjectColor.withOpacity(0.2),
                     ),
-                    // Score text
-                    Column(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        TweenAnimationBuilder<int>(
-                          duration: const Duration(milliseconds: 1500),
-                          tween: IntTween(begin: 0, end: _score),
-                          builder: (context, value, child) {
-                            return Text(
-                              '$value/${_questions.length}',
-                              style: GoogleFonts.inter(
-                                fontSize: isTablet ? 28 : 24,
-                                fontWeight: FontWeight.w700,
-                                color: percentage >= 70 ? subjectColor : Colors.orange,
-                              ),
-                            );
-                          },
-                        ),
-                        Text(
-                          '$percentage%',
+                  ),
+                  child: Row(
+                    children: [
+                      Icon(
+                        percentage >= 70 ? Icons.celebration : Icons.lightbulb_outline,
+                        color: subjectColor,
+                        size: isTablet ? 24 : 20,
+                      ),
+                      SizedBox(width: isTablet ? 12 : 8),
+                      Expanded(
+                        child: Text(
+                          percentage >= 70
+                              ? 'Excellent work! You have mastered this material.'
+                              : 'Good effort! Review the explanations to improve.',
                           style: GoogleFonts.inter(
-                            fontSize: isTablet ? 18 : 16,
-                            fontWeight: FontWeight.w600,
-                            color: Colors.grey[600],
+                            fontSize: isTablet ? 16 : 14,
+                            fontWeight: FontWeight.w500,
+                            color: subjectColor,
                           ),
                         ),
-                      ],
-                    ),
-                  ],
-                ),
-              ),
-              
-              SizedBox(height: isTablet ? 32 : 24),
-              
-              // Performance message
-              Container(
-                padding: EdgeInsets.all(isTablet ? 20 : 16),
-                decoration: BoxDecoration(
-                  color: (percentage >= 70 ? subjectColor : Colors.orange).withOpacity(0.1),
-                  borderRadius: BorderRadius.circular(16),
-                  border: Border.all(
-                    color: (percentage >= 70 ? subjectColor : Colors.orange).withOpacity(0.3),
+                      ),
+                    ],
                   ),
                 ),
-                child: Row(
+
+                SizedBox(height: isTablet ? 32 : 24),
+
+                // Action buttons
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
                   children: [
-                    Icon(
-                      percentage >= 70 ? Icons.celebration : Icons.lightbulb_outline,
-                      color: percentage >= 70 ? subjectColor : Colors.orange,
-                      size: isTablet ? 24 : 20,
+                    // Try Again button
+                    Container(
+                      width: isTablet ? 200 : 150,
+                      margin: const EdgeInsets.symmetric(vertical: 8),
+                      child: TextButton(
+                        style: TextButton.styleFrom(
+                          backgroundColor: Colors.white,
+                          foregroundColor: subjectColor,
+                          padding: EdgeInsets.symmetric(vertical: isTablet ? 16 : 14),
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(12),
+                          ),
+                        ),
+                        onPressed: () {
+                          Navigator.pop(context);
+                          Navigator.pop(context);
+                        },
+                        child: Text(
+                          'Try Again',
+                          style: GoogleFonts.inter(
+                            fontSize: isTablet ? 16 : 14,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                      ),
                     ),
-                    SizedBox(width: isTablet ? 12 : 8),
-                    Expanded(
-                      child: Text(
-                        percentage >= 70
-                            ? 'Excellent work! You have mastered this material.'
-                            : 'Good effort! Review the topics and try again to improve.',
-                        style: GoogleFonts.inter(
-                          fontSize: isTablet ? 16 : 14,
-                          fontWeight: FontWeight.w500,
-                          color: percentage >= 70 ? subjectColor : Colors.orange[700],
+
+                    // Review Results button
+                    Container(
+                      width: isTablet ? 200 : 150,
+                      margin: const EdgeInsets.symmetric(vertical: 8),
+                      child: TextButton(
+                        style: TextButton.styleFrom(
+                          backgroundColor: subjectColor.withOpacity(0.15),
+                          foregroundColor: subjectColor,
+                          padding: EdgeInsets.symmetric(vertical: isTablet ? 16 : 14),
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(12),
+                          ),
+                        ),
+                        onPressed: () {
+                          Navigator.pop(context); // Close the dialog
+                          Navigator.push(
+                            context,
+                            MaterialPageRoute(
+                              builder: (context) => QuizOverviewScreen(
+                                questions: _questions,
+                                quizResponses: _quizResponses,
+                                subject: widget.subject,
+                                score: _score,
+                                totalQuestions: _questions.length,
+                                totalTime: DateTime.now().difference(_quizStartTime!),
+                              ),
+                            ),
+                          );
+                        },
+                        child: Text(
+                          'Review Results',
+                          style: GoogleFonts.inter(
+                            fontSize: isTablet ? 16 : 14,
+                            fontWeight: FontWeight.w600,
+                          ),
                         ),
                       ),
                     ),
                   ],
                 ),
-              ),
-              
-              SizedBox(height: isTablet ? 32 : 24),
-              
-              // Action buttons
-              Row(
-                children: [
-                  Expanded(
-                    child: TextButton(
-                      style: TextButton.styleFrom(
-                        padding: EdgeInsets.symmetric(vertical: isTablet ? 16 : 14),
-                        shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(12),
-                        ),
-                      ),
-                      onPressed: () {
-                        Navigator.pop(context);
-                        Navigator.pop(context);
-                      },
-                      child: Text(
-                        'Try Again',
-                        style: GoogleFonts.inter(
-                          fontSize: isTablet ? 16 : 14,
-                          fontWeight: FontWeight.w600,
-                        ),
-                      ),
-                    ),
-                  ),
-                  SizedBox(width: isTablet ? 16 : 12),
-                  Expanded(
-                    flex: 2,
-                    child: ElevatedButton(
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor: subjectColor,
-                        foregroundColor: Colors.white,
-                        padding: EdgeInsets.symmetric(vertical: isTablet ? 16 : 14),
-                        shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(12),
-                        ),
-                        elevation: 8,
-                      ),
-                      onPressed: () {
-                        Navigator.pop(context);
-                        Navigator.pop(context);
-                        Navigator.pop(context);
-                      },
-                      child: Text(
-                        'Finish Quiz',
-                        style: GoogleFonts.inter(
-                          fontSize: isTablet ? 16 : 14,
-                          fontWeight: FontWeight.w600,
-                        ),
-                      ),
-                    ),
-                  ),
-                ],
-              ),
-            ],
+              ],
+            ),
           ),
         ),
+      ));
+  }
+
+  // ✅ Save complete quiz session
+  Future<void> _saveCompleteQuizSession(int percentage, Duration totalTime) async {
+    try {
+      final userId = FirebaseAuth.instance.currentUser?.uid;
+      if (userId == null) return;
+
+      // Calculate analytics
+      final correctAnswers = _quizResponses.where((r) => r['isCorrect']).length;
+      final avgTimePerQuestion = totalTime.inSeconds / _questions.length;
+      final documentBasedQuestions = _getDocumentBasedCount();
+      final documentBasedCorrect = _quizResponses
+          .where((r) => r['basedOnDocuments'] == true && r['isCorrect'] == true)
+          .length;
+
+      // Topic performance breakdown
+      Map<String, Map<String, dynamic>> topicPerformance = {};
+      for (var response in _quizResponses) {
+        final topicId = response['topicId'] ?? 'unknown';
+        final topicTitle = response['topicTitle'] ?? 'Unknown Topic';
+        
+        if (!topicPerformance.containsKey(topicId)) {
+          topicPerformance[topicId] = {
+            'total': 0,
+            'correct': 0,
+            'title': topicTitle,
+          };
+        }
+        
+        topicPerformance[topicId]!['total'] = (topicPerformance[topicId]!['total'] ?? 0) + 1;
+        if (response['isCorrect']) {
+          topicPerformance[topicId]!['correct'] = (topicPerformance[topicId]!['correct'] ?? 0) + 1;
+        }
+      }
+
+      // Save quiz session summary
+      await FirebaseFirestore.instance
+          .collection('users')
+          .doc(userId)
+          .collection('quiz_sessions')
+          .doc(_quizSessionId)
+          .set({
+        'classId': widget.subject['classId'],
+        'className': widget.subject['title'],
+        'classColor': widget.subject['color'],
+        'totalQuestions': _questions.length,
+        'correctAnswers': correctAnswers,
+        'score': _score,
+        'percentage': percentage,
+        'totalTimeSeconds': totalTime.inSeconds,
+        'avgTimePerQuestion': avgTimePerQuestion,
+        'documentBasedQuestions': documentBasedQuestions,
+        'documentBasedCorrect': documentBasedCorrect,
+        'topicPerformance': topicPerformance.map((key, value) => MapEntry(key, {
+          'topicTitle': value['title'],
+          'total': value['total'],
+          'correct': value['correct'],
+          'percentage': value['total']! > 0 ? (value['correct']! / value['total']! * 100).round() : 0,
+        })),
+        'quizStartTime': Timestamp.fromDate(_quizStartTime!),
+        'quizEndTime': FieldValue.serverTimestamp(),
+        'topics': widget.topics.map((t) => t['title']).toList(),
+        'topicIds': widget.topics.map((t) => t['id']).toList(),
+        'passed': percentage >= 70,
+        'createdAt': FieldValue.serverTimestamp(),
+      });
+
+      // ✅ Update user's overall stats
+      await _updateUserQuizStats(percentage >= 70);
+
+      print('✅ Saved complete quiz session: $_quizSessionId');
+      print('📊 Score: $correctAnswers/$_questions.length ($percentage%)');
+      print('⏱️ Total time: ${_formatDuration(totalTime)}');
+    } catch (e) {
+      print('❌ Error saving quiz session: $e');
+    }
+  }
+
+  // ✅ Update user's overall quiz statistics
+  Future<void> _updateUserQuizStats(bool passed) async {
+    try {
+      final userId = FirebaseAuth.instance.currentUser?.uid;
+      if (userId == null) return;
+
+      final userStatsRef = FirebaseFirestore.instance
+          .collection('users')
+          .doc(userId)
+          .collection('stats')
+          .doc('quiz_stats');
+
+      await FirebaseFirestore.instance.runTransaction((transaction) async {
+        final doc = await transaction.get(userStatsRef);
+        
+        if (doc.exists) {
+          final data = doc.data()!;
+          transaction.update(userStatsRef, {
+            'totalQuizzes': (data['totalQuizzes'] ?? 0) + 1,
+            'totalQuestionsSeen': (data['totalQuestionsSeen'] ?? 0) + _questions.length,
+            'totalCorrectAnswers': (data['totalCorrectAnswers'] ?? 0) + _score,
+            'quizzesPassed': (data['quizzesPassed'] ?? 0) + (passed ? 1 : 0),
+            'lastQuizDate': FieldValue.serverTimestamp(),
+            'classesStudied': FieldValue.arrayUnion([widget.subject['classId']]),
+          });
+        } else {
+          transaction.set(userStatsRef, {
+            'totalQuizzes': 1,
+            'totalQuestionsSeen': _questions.length,
+            'totalCorrectAnswers': _score,
+            'quizzesPassed': passed ? 1 : 0,
+            'lastQuizDate': FieldValue.serverTimestamp(),
+            'classesStudied': [widget.subject['classId']],
+            'createdAt': FieldValue.serverTimestamp(),
+          });
+        }
+      });
+
+      print('✅ Updated user quiz statistics');
+    } catch (e) {
+      print('❌ Error updating user stats: $e');
+    }
+  }
+
+  // ✅ Helper methods
+  int _getDocumentBasedCount() {
+    return _questions.where((q) => q['basedOnDocuments'] == true).length;
+  }
+
+  String _formatDuration(Duration duration) {
+    final minutes = duration.inMinutes;
+    final seconds = duration.inSeconds % 60;
+    return '${minutes}m ${seconds}s';
+  }
+
+  Widget _buildStatItem(String label, String value, IconData icon) {
+    return Column(
+      children: [
+        Icon(icon, size: 20, color: subjectColor),
+        SizedBox(height: 4),
+        Text(
+          value,
+          style: GoogleFonts.inter(
+            fontSize: 14,
+            fontWeight: FontWeight.w700,
+            color: Colors.black87,
+          ),
+        ),
+        Text(
+          label,
+          style: GoogleFonts.inter(
+            fontSize: 10,
+            color: Colors.grey[600],
+          ),
+        ),
+      ],
+    );
+  }
+
+  // ✅ Helper method for progress steps
+  Widget _buildProgressStep(String icon, String label, bool active) {
+    return Column(
+      children: [
+        Container(
+          padding: const EdgeInsets.all(12),
+          decoration: BoxDecoration(
+            color: active ? subjectColor.withOpacity(0.2) : Colors.grey[200],
+            shape: BoxShape.circle,
+          ),
+          child: Text(
+            icon,
+            style: TextStyle(fontSize: 20),
+          ),
+        ),
+        const SizedBox(height: 8),
+        Text(
+          label,
+          style: GoogleFonts.inter(
+            fontSize: 10,
+            fontWeight: FontWeight.w500,
+            color: active ? subjectColor : Colors.grey[500],
+          ),
+          textAlign: TextAlign.center,
+        ),
+      ],
+    );
+  }
+
+  Widget _buildProgressArrow() {
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 8),
+      child: Icon(
+        Icons.arrow_forward,
+        color: Colors.grey[400],
+        size: 16,
       ),
     );
   }
@@ -577,7 +945,6 @@ Please ensure the JSON is valid and contains exactly $questionsPerTopic question
           child: SafeArea(
             child: Column(
               children: [
-                // Custom app bar
                 Padding(
                   padding: EdgeInsets.all(isTablet ? 24 : 16),
                   child: Row(
@@ -588,7 +955,7 @@ Please ensure the JSON is valid and contains exactly $questionsPerTopic question
                       ),
                       Expanded(
                         child: Text(
-                          _generatingQuestions ? 'Generating Questions...' : 'Preparing Quiz...',
+                          _generatingQuestions ? 'Analyzing Documents & Generating Questions...' : 'Preparing Quiz...',
                           style: GoogleFonts.inter(
                             fontSize: isTablet ? 20 : 18,
                             fontWeight: FontWeight.w600,
@@ -601,7 +968,7 @@ Please ensure the JSON is valid and contains exactly $questionsPerTopic question
                     ],
                   ),
                 ),
-                
+
                 Expanded(
                   child: Center(
                     child: ScaleTransition(
@@ -624,7 +991,7 @@ Please ensure the JSON is valid and contains exactly $questionsPerTopic question
                           mainAxisSize: MainAxisSize.min,
                           children: [
                             if (_generatingQuestions) ...[
-                              // AI generation animation
+                              // ✅ Enhanced AI generation animation with document context
                               Container(
                                 padding: EdgeInsets.all(isTablet ? 24 : 20),
                                 decoration: BoxDecoration(
@@ -634,7 +1001,7 @@ Please ensure the JSON is valid and contains exactly $questionsPerTopic question
                                   shape: BoxShape.circle,
                                 ),
                                 child: Icon(
-                                  Icons.auto_awesome,
+                                  Icons.description, // ✅ Document icon
                                   color: Colors.white,
                                   size: isTablet ? 56 : 48,
                                 ),
@@ -645,7 +1012,7 @@ Please ensure the JSON is valid and contains exactly $questionsPerTopic question
                                   colors: [subjectColor, subjectColor.withOpacity(0.7)],
                                 ).createShader(bounds),
                                 child: Text(
-                                  'AI Crafting Your Quiz',
+                                  'Analyzing Your Materials', // ✅ Updated text
                                   style: GoogleFonts.inter(
                                     fontSize: isTablet ? 24 : 20,
                                     fontWeight: FontWeight.w700,
@@ -656,7 +1023,7 @@ Please ensure the JSON is valid and contains exactly $questionsPerTopic question
                               ),
                               SizedBox(height: isTablet ? 16 : 12),
                               Text(
-                                'Creating ${widget.questionCount} personalized questions\nfor your selected topics',
+                                'Reading uploaded documents and creating\n${widget.questionCount} personalized questions based on your study materials', // ✅ Updated description
                                 style: GoogleFonts.inter(
                                   fontSize: isTablet ? 16 : 14,
                                   color: Colors.grey[600],
@@ -665,32 +1032,16 @@ Please ensure the JSON is valid and contains exactly $questionsPerTopic question
                                 textAlign: TextAlign.center,
                               ),
                               SizedBox(height: isTablet ? 32 : 24),
-                              // Animated progress bar
-                              Container(
-                                width: isTablet ? 250 : 200,
-                                height: isTablet ? 8 : 6,
-                                decoration: BoxDecoration(
-                                  color: Colors.grey[200],
-                                  borderRadius: BorderRadius.circular(4),
-                                ),
-                                child: TweenAnimationBuilder<double>(
-                                  duration: const Duration(seconds: 3),
-                                  tween: Tween(begin: 0.0, end: 1.0),
-                                  builder: (context, value, child) {
-                                    return FractionallySizedBox(
-                                      alignment: Alignment.centerLeft,
-                                      widthFactor: value,
-                                      child: Container(
-                                        decoration: BoxDecoration(
-                                          gradient: LinearGradient(
-                                            colors: [subjectColor, subjectColor.withOpacity(0.7)],
-                                          ),
-                                          borderRadius: BorderRadius.circular(4),
-                                        ),
-                                      ),
-                                    );
-                                  },
-                                ),
+                              // Progress indicators
+                              Row(
+                                mainAxisAlignment: MainAxisAlignment.center,
+                                children: [
+                                  _buildProgressStep('📄', 'Reading\nDocuments', true),
+                                  _buildProgressArrow(),
+                                  _buildProgressStep('🤖', 'Generating\nQuestions', true),
+                                  _buildProgressArrow(),
+                                  _buildProgressStep('✨', 'Preparing\nQuiz', false),
+                                ],
                               ),
                             ] else ...[
                               // Regular loading
@@ -714,15 +1065,6 @@ Please ensure the JSON is valid and contains exactly $questionsPerTopic question
                                   color: subjectColor,
                                 ),
                               ),
-                              SizedBox(height: isTablet ? 12 : 8),
-                              Text(
-                                'Gathering existing questions from your topics',
-                                style: GoogleFonts.inter(
-                                  fontSize: isTablet ? 16 : 14,
-                                  color: Colors.grey[600],
-                                ),
-                                textAlign: TextAlign.center,
-                              ),
                             ],
                           ],
                         ),
@@ -731,99 +1073,6 @@ Please ensure the JSON is valid and contains exactly $questionsPerTopic question
                   ),
                 ),
               ],
-            ),
-          ),
-        ),
-      );
-    }
-
-    if (_questions.isEmpty) {
-      return Scaffold(
-        body: Container(
-          decoration: BoxDecoration(
-            gradient: LinearGradient(
-              begin: Alignment.topLeft,
-              end: Alignment.bottomRight,
-              colors: [Colors.red.shade400, Colors.red.shade600],
-            ),
-          ),
-          child: SafeArea(
-            child: Center(
-              child: Container(
-                margin: EdgeInsets.all(isTablet ? 40 : 32),
-                padding: EdgeInsets.all(isTablet ? 48 : 40),
-                decoration: BoxDecoration(
-                  color: Colors.white,
-                  borderRadius: BorderRadius.circular(isTablet ? 32 : 24),
-                  boxShadow: [
-                    BoxShadow(
-                      color: Colors.black.withOpacity(0.2),
-                      blurRadius: 30,
-                      offset: const Offset(0, 15),
-                    ),
-                  ],
-                ),
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Container(
-                      padding: EdgeInsets.all(isTablet ? 24 : 20),
-                      decoration: BoxDecoration(
-                        color: Colors.red.withOpacity(0.1),
-                        shape: BoxShape.circle,
-                      ),
-                      child: Icon(
-                        Icons.quiz_outlined,
-                        size: isTablet ? 64 : 56,
-                        color: Colors.red,
-                      ),
-                    ),
-                    SizedBox(height: isTablet ? 32 : 24),
-                    Text(
-                      'Unable to Generate Questions',
-                      style: GoogleFonts.inter(
-                        fontSize: isTablet ? 24 : 20,
-                        fontWeight: FontWeight.w700,
-                        color: Colors.red,
-                      ),
-                      textAlign: TextAlign.center,
-                    ),
-                    SizedBox(height: isTablet ? 16 : 12),
-                    Text(
-                      'We couldn\'t generate questions for the selected topics. Please check your internet connection and try again.',
-                      style: GoogleFonts.inter(
-                        fontSize: isTablet ? 16 : 14,
-                        color: Colors.grey[600],
-                        height: 1.5,
-                      ),
-                      textAlign: TextAlign.center,
-                    ),
-                    SizedBox(height: isTablet ? 32 : 24),
-                    SizedBox(
-                      width: double.infinity,
-                      child: ElevatedButton(
-                        style: ElevatedButton.styleFrom(
-                          backgroundColor: Colors.red,
-                          foregroundColor: Colors.white,
-                          padding: EdgeInsets.symmetric(vertical: isTablet ? 16 : 14),
-                          shape: RoundedRectangleBorder(
-                            borderRadius: BorderRadius.circular(12),
-                          ),
-                          elevation: 8,
-                        ),
-                        onPressed: () => Navigator.pop(context),
-                        child: Text(
-                          'Go Back',
-                          style: GoogleFonts.inter(
-                            fontSize: isTablet ? 16 : 14,
-                            fontWeight: FontWeight.w600,
-                          ),
-                        ),
-                      ),
-                    ),
-                  ],
-                ),
-              ),
             ),
           ),
         ),
@@ -845,7 +1094,7 @@ Please ensure the JSON is valid and contains exactly $questionsPerTopic question
         child: SafeArea(
           child: Column(
             children: [
-              // Enhanced app bar with progress
+              // App bar and progress
               Container(
                 padding: EdgeInsets.all(isTablet ? 24 : 16),
                 child: Column(
@@ -891,7 +1140,7 @@ Please ensure the JSON is valid and contains exactly $questionsPerTopic question
                                         'AI Generated',
                                         style: GoogleFonts.inter(
                                           fontSize: isTablet ? 12 : 10,
-                                          fontWeight: FontWeight.w600,
+                                          fontWeight: FontWeight.w500,
                                           color: Colors.white,
                                         ),
                                       ),
@@ -902,7 +1151,6 @@ Please ensure the JSON is valid and contains exactly $questionsPerTopic question
                             ],
                           ),
                         ),
-                        // Score display
                         Container(
                           padding: EdgeInsets.symmetric(
                             horizontal: isTablet ? 16 : 12,
@@ -924,7 +1172,6 @@ Please ensure the JSON is valid and contains exactly $questionsPerTopic question
                       ],
                     ),
                     SizedBox(height: isTablet ? 20 : 16),
-                    // Animated progress bar
                     AnimatedBuilder(
                       animation: _progressAnimation,
                       builder: (context, child) {
@@ -957,7 +1204,6 @@ Please ensure the JSON is valid and contains exactly $questionsPerTopic question
                   ],
                 ),
               ),
-              
               // Main content
               Expanded(
                 child: FadeTransition(
@@ -992,9 +1238,7 @@ Please ensure the JSON is valid and contains exactly $questionsPerTopic question
                                 ),
                               ),
                             ),
-                            
                             SizedBox(height: isTablet ? 24 : 20),
-                            
                             // Question card
                             Expanded(
                               child: Container(
@@ -1035,9 +1279,7 @@ Please ensure the JSON is valid and contains exactly $questionsPerTopic question
                                         textAlign: TextAlign.center,
                                       ),
                                     ),
-                                    
                                     SizedBox(height: isTablet ? 32 : 24),
-                                    
                                     // Answer options
                                     Expanded(
                                       child: ListView.builder(
@@ -1142,9 +1384,7 @@ Please ensure the JSON is valid and contains exactly $questionsPerTopic question
                                                         ),
                                                       ),
                                                     ),
-                                                    
                                                     SizedBox(width: isTablet ? 20 : 16),
-                                                    
                                                     // Answer text
                                                     Expanded(
                                                       child: Text(
@@ -1157,7 +1397,6 @@ Please ensure the JSON is valid and contains exactly $questionsPerTopic question
                                                         ),
                                                       ),
                                                     ),
-                                                    
                                                     // Result icon
                                                     if (_answered && isCorrect)
                                                       Container(
@@ -1197,60 +1436,6 @@ Please ensure the JSON is valid and contains exactly $questionsPerTopic question
                                 ),
                               ),
                             ),
-                            
-                            // Next button
-                            if (_answered) ...[
-                              SizedBox(height: isTablet ? 24 : 20),
-                              Container(
-                                width: double.infinity,
-                                height: isTablet ? 64 : 56,
-                                decoration: BoxDecoration(
-                                  gradient: LinearGradient(
-                                    colors: [Colors.white, Colors.white.withOpacity(0.9)],
-                                  ),
-                                  borderRadius: BorderRadius.circular(isTablet ? 32 : 28),
-                                  boxShadow: [
-                                    BoxShadow(
-                                      color: Colors.white.withOpacity(0.5),
-                                      blurRadius: 20,
-                                      offset: const Offset(0, 10),
-                                    ),
-                                  ],
-                                ),
-                                child: ElevatedButton(
-                                  style: ElevatedButton.styleFrom(
-                                    backgroundColor: Colors.transparent,
-                                    foregroundColor: subjectColor,
-                                    shadowColor: Colors.transparent,
-                                    shape: RoundedRectangleBorder(
-                                      borderRadius: BorderRadius.circular(isTablet ? 32 : 28),
-                                    ),
-                                  ),
-                                  onPressed: _nextQuestion,
-                                  child: Row(
-                                    mainAxisAlignment: MainAxisAlignment.center,
-                                    children: [
-                                      Text(
-                                        _currentQuestionIndex < _questions.length - 1
-                                            ? 'Next Question'
-                                            : 'Finish Quiz',
-                                        style: GoogleFonts.inter(
-                                          fontSize: isTablet ? 20 : 18,
-                                          fontWeight: FontWeight.w700,
-                                        ),
-                                      ),
-                                      SizedBox(width: isTablet ? 12 : 8),
-                                      Icon(
-                                        _currentQuestionIndex < _questions.length - 1
-                                            ? Icons.arrow_forward_rounded
-                                            : Icons.flag_rounded,
-                                        size: isTablet ? 28 : 24,
-                                      ),
-                                    ],
-                                  ),
-                                ),
-                              ),
-                            ],
                           ],
                         ),
                       ),
@@ -1258,6 +1443,61 @@ Please ensure the JSON is valid and contains exactly $questionsPerTopic question
                   ),
                 ),
               ),
+              // Next Question button in a separate container
+              if (_answered)
+                Container(
+                  width: double.infinity,
+                  margin: EdgeInsets.symmetric(
+                    horizontal: isTablet ? 40 : 20,
+                    vertical: isTablet ? 24 : 16,
+                  ),
+                  height: isTablet ? 64 : 56,
+                  decoration: BoxDecoration(
+                    gradient: LinearGradient(
+                      colors: [Colors.white, Colors.white.withOpacity(0.9)],
+                    ),
+                    borderRadius: BorderRadius.circular(isTablet ? 32 : 28),
+                    boxShadow: [
+                      BoxShadow(
+                        color: Colors.white.withOpacity(0.5),
+                        blurRadius: 20,
+                        offset: const Offset(0, 10),
+                      ),
+                    ],
+                  ),
+                  child: ElevatedButton(
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: Colors.transparent,
+                      foregroundColor: subjectColor,
+                      shadowColor: Colors.transparent,
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(isTablet ? 32 : 28),
+                      ),
+                    ),
+                    onPressed: _nextQuestion,
+                    child: Row(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        Text(
+                          _currentQuestionIndex < _questions.length - 1
+                              ? 'Next Question'
+                              : 'Finish Quiz',
+                          style: GoogleFonts.inter(
+                            fontSize: isTablet ? 20 : 18,
+                            fontWeight: FontWeight.w700,
+                          ),
+                        ),
+                        SizedBox(width: isTablet ? 12 : 8),
+                        Icon(
+                          _currentQuestionIndex < _questions.length - 1
+                              ? Icons.arrow_forward_rounded
+                              : Icons.analytics_rounded,
+                          size: isTablet ? 28 : 24,
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
             ],
           ),
         ),

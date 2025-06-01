@@ -1,4 +1,13 @@
 {
     "cmake.sourceDirectory": "D:/flutter_windows_3.29.0-stable/app/linux",
-    "java.configuration.updateBuildConfiguration": "interactive"
+    "java.configuration.updateBuildConfiguration": "interactive",
+    "dart.showInspectorNotificationsForWidgetErrors": false,
+    "dart.debugExternalPackageLibraries": false,
+    "dart.debugSdkLibraries": false,
+    "flutter.showStructuredErrors": false,
+    "dart.showTodos": false,
+    "dart.analysisExcludedFolders": [
+        ".dart_tool",
+        "build"
+    ]
 }

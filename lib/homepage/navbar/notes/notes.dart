@@ -1,126 +1,94 @@
 import 'package:flutter/material.dart';
+import 'package:google_fonts/google_fonts.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
-import 'package:google_fonts/google_fonts.dart';
-import 'package:flutter_sound/flutter_sound.dart';
-
-// Import the separated modules
-import 'drawing.dart';
+import 'dart:async';
+import 'note_toolbar.dart';
+import 'task_components.dart';
+import 'image_widget.dart';
 import 'todo.dart';
 import 'attachments.dart';
-import 'text_formatter.dart';
 
-class Notes extends StatefulWidget {
-  const Notes({super.key});
+class NotesScreen extends StatefulWidget {
+  final Function(bool)? onNoteEditingChanged;
+
+  const NotesScreen({super.key, this.onNoteEditingChanged});
 
   @override
-  State<Notes> createState() => _NotesState();
+  State<NotesScreen> createState() => _NotesScreenState();
 }
 
-class _NotesState extends State<Notes> {
-  String get uid => FirebaseAuth.instance.currentUser!.uid;
+class _NotesScreenState extends State<NotesScreen> {
+  bool _showingAddNote = false;
 
-  bool _subjectsLoading = true;
-  List<String> _subjects = [];
-  String? _selectedSubject;
-  bool _deleteMode = false;
-  final Set<String> _selectedNotes = {};
+  void _toggleAddNote() {
+    setState(() {
+      _showingAddNote = !_showingAddNote;
+    });
+    widget.onNoteEditingChanged?.call(_showingAddNote);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    return Scaffold(
+      backgroundColor: isDark ? Colors.black : Colors.white,
+      body:
+          _showingAddNote
+              ? AddNoteScreen(onBack: _toggleAddNote)
+              : NotesOverview(onAddNote: _toggleAddNote),
+    );
+  }
+}
+
+class NotesOverview extends StatefulWidget {
+  final VoidCallback onAddNote;
+
+  const NotesOverview({super.key, required this.onAddNote});
+
+  @override
+  State<NotesOverview> createState() => _NotesOverviewState();
+}
+
+class _NotesOverviewState extends State<NotesOverview> {
+  final bool _showTodoFilter = false; // Keep this for the button state
+  bool _editMode = false;
+
+  Future<void> _deleteNote(String docId) async {
+    final user = FirebaseAuth.instance.currentUser;
+    if (user == null) return;
+    try {
+      await FirebaseFirestore.instance
+          .collection('users')
+          .doc(user.uid)
+          .collection('Notes')
+          .doc(docId)
+          .delete();
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Note deleted'),
+          backgroundColor: Colors.red,
+        ),
+      );
+    } catch (e) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Error deleting note: $e'),
+          backgroundColor: Colors.red,
+        ),
+      );
+    }
+  }
 
   @override
   void initState() {
     super.initState();
-    fetchSubjects();
+    // Remove _loadTodoTasks() call
   }
 
-  // Enhanced helper method for safe field access
-  String _getFieldSafely(Map<String, dynamic>? data, String fieldName, [String defaultValue = '']) {
-    try {
-      if (data == null || !data.containsKey(fieldName)) {
-        return defaultValue;
-      }
-      final value = data[fieldName];
-      if (value == null) {
-        return defaultValue;
-      }
-      return value.toString().trim();
-    } catch (e) {
-      print('Error accessing field "$fieldName": $e');
-      return defaultValue;
-    }
-  }
-
-  Future<void> fetchSubjects() async {
-    try {
-      setState(() {
-        _subjectsLoading = true;
-      });
-      
-      // Fixed: Use per-user Classes collection
-      final snapshot = await FirebaseFirestore.instance
-          .collection('users')
-          .doc(uid)
-          .collection('Classes')
-          .get();
-      final uniqueSubjects = <String>{};
-      
-      for (final doc in snapshot.docs) {
-        try {
-          final data = doc.data();
-          final title = _getFieldSafely(data, 'title');
-          if (title.isNotEmpty) {
-            uniqueSubjects.add(title);
-          }
-        } catch (e) {
-          print('Error processing document ${doc.id}: $e');
-        }
-      }
-      
-      setState(() {
-        _subjects = uniqueSubjects.toList();
-        _subjectsLoading = false;
-      });
-    } catch (e) {
-      print('Error fetching subjects: $e');
-      setState(() {
-        _subjects = [];
-        _subjectsLoading = false;
-      });
-    }
-  }
-
-  void _openAddNoteScreen() async {
-    await Navigator.push(
-      context,
-      MaterialPageRoute(
-        builder: (context) => AddNoteScreen(
-          initialSubject: _selectedSubject,
-        ),
-      ),
-    );
-  }
-
-  Future<void> _deleteSelectedNotes() async {
-    try {
-      for (String docId in _selectedNotes) {
-        // Fixed: Use per-user Notes collection
-        await FirebaseFirestore.instance
-            .collection('users')
-            .doc(uid)
-            .collection('Notes')
-            .doc(docId)
-            .delete();
-      }
-      setState(() {
-        _selectedNotes.clear();
-        _deleteMode = false;
-      });
-    } catch (e) {
-      print('Error deleting notes: $e');
-      setState(() {
-        _selectedNotes.clear();
-        _deleteMode = false;
-      });
-    }
+  void _onPlusPressed() {
+    // Remove todo logic, only handle notes
+    widget.onAddNote();
   }
 
   @override
@@ -130,297 +98,443 @@ class _NotesState extends State<Notes> {
       appBar: AppBar(
         backgroundColor: Colors.white,
         elevation: 0,
-        centerTitle: true,
-        iconTheme: const IconThemeData(color: Colors.black),
         title: Text(
-          'Notes',
-          style: GoogleFonts.dmSerifText(fontSize: 40),
+          "Notes", // Always show "Notes"
+          style: GoogleFonts.dmSerifText(
+            fontSize: 26,
+            color: Colors.blueGrey[900],
+            fontWeight: FontWeight.bold,
+            letterSpacing: 0.5,
+          ),
         ),
         actions: [
-          if (_deleteMode) ...[
-            IconButton(
-              icon: const Icon(Icons.close, color: Colors.black),
-              tooltip: 'Cancel',
-              onPressed: () {
-                setState(() {
-                  _deleteMode = false;
-                  _selectedNotes.clear();
-                });
-              },
+          // Add plus icon at the top
+          IconButton(
+            icon: Icon(
+              Icons.add,
+              color: Colors.blue,
+              size: 28,
             ),
-            if (_selectedNotes.isNotEmpty)
-              IconButton(
-                icon: const Icon(Icons.delete, color: Colors.red),
-                tooltip: 'Delete Selected (${_selectedNotes.length})',
-                onPressed: () async {
-                  final confirm = await showDialog<bool>(
-                    context: context,
-                    builder: (context) => AlertDialog(
-                      title: const Text('Delete Notes'),
-                      content: Text('Delete ${_selectedNotes.length} selected note(s)?'),
-                      actions: [
-                        TextButton(
-                          onPressed: () => Navigator.pop(context, false),
-                          child: const Text('Cancel'),
-                        ),
-                        TextButton(
-                          onPressed: () => Navigator.pop(context, true),
-                          child: const Text('Delete', style: TextStyle(color: Colors.red)),
-                        ),
-                      ],
-                    ),
-                  );
-                  if (confirm == true) {
-                    await _deleteSelectedNotes();
-                  }
-                },
-              ),
-          ] else ...[
-            IconButton(
-              icon: const Icon(Icons.edit, color: Colors.black),
-              tooltip: 'Delete Notes',
-              onPressed: () {
-                setState(() {
-                  _deleteMode = true;
-                  _selectedNotes.clear();
-                });
-              },
+            tooltip: "Add Note",
+            onPressed: widget.onAddNote,
+          ),
+          IconButton(
+            icon: Icon(
+              _editMode ? Icons.close : Icons.edit,
+              color: Colors.blueGrey,
+              size: 24,
             ),
-            IconButton(
-              icon: const Icon(Icons.add, color: Colors.black, size: 28),
-              tooltip: 'New Note',
-              onPressed: _subjectsLoading ? null : _openAddNoteScreen,
-            ),
-          ],
-        ],
-      ),
-      body: StreamBuilder<QuerySnapshot>(
-        // ✅ Already using per-user Notes collection - this is correct
-        stream: FirebaseFirestore.instance
-            .collection('users')
-            .doc(uid)
-            .collection('Notes')
-            .orderBy('createdAt', descending: true)
-            .snapshots(),
-        builder: (context, snapshot) {
-          if (snapshot.connectionState == ConnectionState.waiting) {
-            return const Center(child: CircularProgressIndicator());
-          }
-          
-          if (snapshot.hasError) {
-            return Center(
-              child: Column(
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: [
-                  const Icon(Icons.error, color: Colors.red, size: 48),
-                  const SizedBox(height: 16),
-                  Text(
-                    'Error loading notes',
-                    style: GoogleFonts.dmSerifText(fontSize: 22, color: Colors.red),
-                  ),
-                  const SizedBox(height: 8),
-                  Text(
-                    snapshot.error.toString(),
-                    style: const TextStyle(color: Colors.grey),
-                    textAlign: TextAlign.center,
-                  ),
-                ],
-              ),
-            );
-          }
-          
-          if (!snapshot.hasData || snapshot.data!.docs.isEmpty) {
-            return Center(
-              child: Column(
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: [
-                  const Icon(Icons.note_add, color: Colors.grey, size: 64),
-                  const SizedBox(height: 16),
-                  Text(
-                    'No notes found',
-                    style: GoogleFonts.dmSerifText(fontSize: 22, color: Colors.grey),
-                    textAlign: TextAlign.center,
-                  ),
-                  const SizedBox(height: 8),
-                  const Text(
-                    'Tap the + button to create your first note',
-                    style: TextStyle(color: Colors.grey),
-                    textAlign: TextAlign.center,
-                  ),
-                ],
-              ),
-            );
-          }
-          
-          final notes = snapshot.data!.docs.toList();
-
-          return ListView.builder(
-            itemCount: notes.length,
-            padding: const EdgeInsets.symmetric(vertical: 16, horizontal: 12),
-            itemBuilder: (context, index) {
-              final doc = notes[index];
-              final data = doc.data() as Map<String, dynamic>?;
-
-              // Use safe field access everywhere
-              final title = _getFieldSafely(data, 'title');
-              final content = _getFieldSafely(data, 'content');
-              final subject = _getFieldSafely(data, 'subject');
-              final imagePath = _getFieldSafely(data, 'imagePath');
-              final filePath = _getFieldSafely(data, 'filePath');
-              final audioPath = _getFieldSafely(data, 'audioPath');
-
-              final isSelected = _selectedNotes.contains(doc.id);
-
-              return Card(
-                key: ValueKey(doc.id),
-                margin: const EdgeInsets.only(bottom: 16),
-                elevation: 2,
-                color: isSelected ? Colors.red[100] : Colors.white,
-                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-                child: InkWell(
-                  borderRadius: BorderRadius.circular(16),
-                  onTap: () async {
-                    if (_deleteMode) {
-                      setState(() {
-                        if (isSelected) {
-                          _selectedNotes.remove(doc.id);
-                        } else {
-                          _selectedNotes.add(doc.id);
-                        }
-                      });
-                    } else {
-                      Navigator.push(
-                        context,
-                        MaterialPageRoute(
-                          builder: (context) => AddNoteScreen(
-                            docId: doc.id,
-                            initialTitle: title,
-                            initialContent: content,
-                            initialSubject: subject,
-                            initialImagePath: imagePath.isNotEmpty ? imagePath : null,
-                            initialFilePath: filePath.isNotEmpty ? filePath : null,
-                            initialAudioPath: audioPath.isNotEmpty ? audioPath : null,
+            tooltip: "Edit Notes",
+            onPressed: () {
+              setState(() {
+                _editMode = !_editMode;
+              });
+            },
+          ),
+          // Keep the todo button but navigate to QuickTaskManager
+          IconButton(
+            icon: Icon(Icons.checklist, color: Colors.blueGrey[400]),
+            onPressed: () {
+              try {
+                Navigator.push(
+                  context,
+                  MaterialPageRoute(
+                    builder: (context) => Scaffold(
+                      backgroundColor: Theme.of(context).brightness == Brightness.dark
+                          ? Colors.black
+                          : Colors.white,
+                      appBar: AppBar(
+                        backgroundColor: Theme.of(context).brightness == Brightness.dark
+                            ? Colors.black
+                            : Colors.white,
+                        elevation: 0,
+                        title: Text(
+                          'Todo Tasks',
+                          style: GoogleFonts.dmSerifText(
+                            fontSize: 20,
+                            color: Theme.of(context).brightness == Brightness.dark
+                                ? Colors.white
+                                : Colors.blueGrey[900],
+                            fontWeight: FontWeight.bold,
                           ),
                         ),
-                      );
-                    }
-                  },
-                  child: Padding(
-                    padding: const EdgeInsets.symmetric(vertical: 18, horizontal: 20),
-                    child: Row(
-                      children: [
-                        Expanded(
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              Text(
-                                title.isNotEmpty ? title : 'Untitled',
-                                style: GoogleFonts.dmSerifText(
-                                  fontSize: 22,
-                                  fontWeight: FontWeight.bold,
-                                  color: Colors.black87,
+                        iconTheme: IconThemeData(
+                          color: Theme.of(context).brightness == Brightness.dark
+                              ? Colors.white
+                              : Colors.black,
+                        ),
+                      ),
+                      body: const TodoManager(), // Use TodoManager instead of QuickTaskManager
+                    ),
+                  ),
+                );
+              } catch (e) {
+                print('Error navigating to TodoManager: $e');
+                ScaffoldMessenger.of(context).showSnackBar(
+                  SnackBar(content: Text('Error opening Todo Tasks: $e')),
+                );
+              }
+            },
+            tooltip: "Todo Tasks",
+          ),
+        ],
+      ),
+      body: Container(
+        color: Colors.white,
+        child: _buildNotesList(), // Always show notes list
+      ),
+      // Remove floatingActionButton completely - no longer needed
+    );
+  }
+
+  Widget _buildNotesList() {
+    final user = FirebaseAuth.instance.currentUser;
+    if (user == null) {
+      return const Center(child: Text('Please log in to view notes'));
+    }
+
+    return StreamBuilder<QuerySnapshot>(
+      stream:
+          FirebaseFirestore.instance
+              .collection('users')
+              .doc(user.uid)
+              .collection('Notes')
+              .orderBy('updatedAt', descending: true)
+              .snapshots(),
+      builder: (context, snapshot) {
+        if (snapshot.connectionState == ConnectionState.waiting) {
+          return const Center(child: CircularProgressIndicator());
+        }
+
+        if (snapshot.hasError) {
+          return Center(child: Text('Error: ${snapshot.error}'));
+        }
+
+        final docs = snapshot.data?.docs ?? [];
+
+        if (docs.isEmpty) {
+          return Center(
+            child: Column(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                Icon(Icons.note_add, size: 64, color: Colors.grey[400]),
+                const SizedBox(height: 16),
+                Text(
+                  'No notes yet',
+                  style: GoogleFonts.inter(
+                    fontSize: 18,
+                    color: Colors.grey[600],
+                  ),
+                ),
+                const SizedBox(height: 8),
+                Text(
+                  'Tap + to create your first note',
+                  style: GoogleFonts.inter(
+                    fontSize: 14,
+                    color: Colors.grey[500],
+                  ),
+                ),
+              ],
+            ),
+          );
+        }
+
+        return ListView.builder(
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+          itemCount: docs.length,
+          itemBuilder: (context, index) {
+            final doc = docs[index];
+            final data = doc.data() as Map<String, dynamic>;
+            final title = data['title'] ?? 'Untitled';
+            final content = data['content'] ?? '';
+            final subject = data['subject'] ?? '';
+            final updatedAt =
+                (data['updatedAt'] as Timestamp?)?.toDate() ?? DateTime.now();
+
+            return FutureBuilder<Color>(
+              future:
+                  subject.isNotEmpty
+                      ? _getClassColor(subject)
+                      : Future.value(_getDefaultColor()),
+              builder: (context, colorSnapshot) {
+                // Always get a color - either from class or default
+                final classColor = colorSnapshot.data ?? _getDefaultColor();
+
+                return Container(
+                  margin: const EdgeInsets.only(bottom: 12),
+                  decoration: BoxDecoration(
+                    color: Colors.white,
+                    borderRadius: BorderRadius.circular(16),
+                    border: Border.all(
+                      color: classColor, // Always use a color
+                      width: 2.5, // Always use thick border
+                    ),
+                    boxShadow: [
+                      BoxShadow(
+                        color: classColor.withOpacity(
+                          0.15,
+                        ), // Always match the border color
+                        blurRadius: 12,
+                        offset: const Offset(0, 3),
+                      ),
+                    ],
+                  ),
+                  child: Material(
+                    color: Colors.transparent,
+                    child: InkWell(
+                      borderRadius: BorderRadius.circular(16),
+                      onTap: () {
+                        Navigator.push(
+                          context,
+                          MaterialPageRoute(
+                            builder:
+                                (context) => AddNoteScreen(
+                                  onBack: () => Navigator.pop(context),
+                                  docId: doc.id,
+                                  initialTitle: title,
+                                  initialSubject: subject,
                                 ),
-                                maxLines: 1,
-                                overflow: TextOverflow.ellipsis,
+                          ),
+                        );
+                      },
+                      child: Padding(
+                        padding: const EdgeInsets.all(20),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Row(
+                              children: [
+                                // Always show color indicator
+                                Container(
+                                  width: 12,
+                                  height: 12,
+                                  decoration: BoxDecoration(
+                                    color: classColor,
+                                    shape: BoxShape.circle,
+                                  ),
+                                ),
+                                const SizedBox(width: 12),
+                                Expanded(
+                                  child: Text(
+                                    title,
+                                    style: GoogleFonts.dmSerifText(
+                                      fontSize: 20,
+                                      fontWeight: FontWeight.bold,
+                                      color: Colors.blueGrey[900],
+                                    ),
+                                    maxLines: 2,
+                                    overflow: TextOverflow.ellipsis,
+                                  ),
+                                ),
+                                if (_editMode)
+                                  IconButton(
+                                    icon: const Icon(
+                                      Icons.delete,
+                                      color: Colors.red,
+                                      size: 20,
+                                    ),
+                                    onPressed: () => _deleteNote(doc.id),
+                                  ),
+                              ],
+                            ),
+
+                            // Always show subject badge if subject exists
+                            if (subject.isNotEmpty) ...[
+                              const SizedBox(height: 12),
+                              Container(
+                                padding: const EdgeInsets.symmetric(
+                                  horizontal: 12,
+                                  vertical: 8,
+                                ),
+                                decoration: BoxDecoration(
+                                  color: classColor.withOpacity(0.1),
+                                  borderRadius: BorderRadius.circular(12),
+                                  border: Border.all(
+                                    color: classColor.withOpacity(0.3),
+                                    width: 1,
+                                  ),
+                                ),
+                                child: Row(
+                                  mainAxisSize: MainAxisSize.min,
+                                  children: [
+                                    Icon(
+                                      Icons.book,
+                                      color: classColor,
+                                      size: 14,
+                                    ),
+                                    const SizedBox(width: 6),
+                                    Text(
+                                      subject,
+                                      style: GoogleFonts.inter(
+                                        fontSize: 12,
+                                        color: classColor,
+                                        fontWeight: FontWeight.w600,
+                                      ),
+                                    ),
+                                  ],
+                                ),
                               ),
-                              const SizedBox(height: 6),
+                            ],
+
+                            if (content.isNotEmpty) ...[
+                              const SizedBox(height: 12),
                               Text(
-                                content.isNotEmpty ? content : 'No content',
-                                style: GoogleFonts.roboto(
-                                  fontSize: 16,
-                                  color: Colors.black54,
+                                content,
+                                style: GoogleFonts.inter(
+                                  fontSize: 14,
+                                  color: Colors.blueGrey[600],
+                                  height: 1.4,
                                 ),
                                 maxLines: 3,
                                 overflow: TextOverflow.ellipsis,
                               ),
-                              if (subject.isNotEmpty) ...[
-                                const SizedBox(height: 4),
-                                Row(
-                                  children: [
-                                    Icon(Icons.book, size: 14, color: Colors.deepPurple[300]),
-                                    const SizedBox(width: 4),
-                                    Text(
-                                      subject,
-                                      style: TextStyle(
-                                        fontSize: 12,
-                                        color: Colors.deepPurple[300],
-                                        fontWeight: FontWeight.w500,
-                                      ),
-                                    ),
-                                  ],
-                                ),
-                              ],
-                              if (imagePath.isNotEmpty || filePath.isNotEmpty || audioPath.isNotEmpty) ...[
-                                const SizedBox(height: 4),
-                                Row(
-                                  children: [
-                                    if (imagePath.isNotEmpty)
-                                      Icon(Icons.image, size: 16, color: Colors.blue[400]),
-                                    if (filePath.isNotEmpty)
-                                      Icon(Icons.attach_file, size: 16, color: Colors.green[400]),
-                                    if (audioPath.isNotEmpty)
-                                      Icon(Icons.audiotrack, size: 16, color: Colors.orange[400]),
-                                    const SizedBox(width: 4),
-                                    Text(
-                                      'Has attachments',
-                                      style: TextStyle(
-                                        fontSize: 12,
-                                        color: Colors.grey[600],
-                                        fontStyle: FontStyle.italic,
-                                      ),
-                                    ),
-                                  ],
-                                ),
-                              ],
                             ],
-                          ),
-                        ),
-                        if (_deleteMode)
-                          Padding(
-                            padding: const EdgeInsets.only(left: 12),
-                            child: Checkbox(
-                              value: isSelected,
-                              onChanged: (value) {
-                                setState(() {
-                                  if (value == true) {
-                                    _selectedNotes.add(doc.id);
-                                  } else {
-                                    _selectedNotes.remove(doc.id);
-                                  }
-                                });
-                              },
+
+                            const SizedBox(height: 16),
+                            Row(
+                              children: [
+                                Icon(
+                                  Icons.access_time,
+                                  size: 14,
+                                  color: Colors.grey[400],
+                                ),
+                                const SizedBox(width: 4),
+                                Text(
+                                  _formatDateTime(updatedAt),
+                                  style: GoogleFonts.inter(
+                                    fontSize: 12,
+                                    color: Colors.grey[500],
+                                  ),
+                                ),
+                                const Spacer(),
+                                if (data['tasks'] != null &&
+                                    (data['tasks'] as List).isNotEmpty) ...[
+                                  Icon(
+                                    Icons.check_circle_outline,
+                                    size: 14,
+                                    color: classColor, // Always use class color
+                                  ),
+                                  const SizedBox(width: 4),
+                                  Text(
+                                    '${(data['tasks'] as List).length} tasks',
+                                    style: GoogleFonts.inter(
+                                      fontSize: 12,
+                                      color:
+                                          classColor, // Always use class color
+                                      fontWeight: FontWeight.w500,
+                                    ),
+                                  ),
+                                ],
+                              ],
                             ),
-                          ),
-                      ],
+                          ],
+                        ),
+                      ),
                     ),
-                  ),
-                ),
-              );
-            },
-          );
-        },
-      ),
+                  ));
+              },
+            );
+          },
+        );
+      },
     );
+  }
+
+  // Add this method to get the actual class color from Firestore:
+  Future<Color> _getClassColor(String className) async {
+    try {
+      final user = FirebaseAuth.instance.currentUser;
+      if (user == null) return _getSubjectColor(className);
+
+      final snapshot =
+          await FirebaseFirestore.instance
+              .collection('users')
+              .doc(user.uid)
+              .collection('Classes')
+              .where('title', isEqualTo: className)
+              .limit(1)
+              .get();
+
+      if (snapshot.docs.isNotEmpty) {
+        final classData = snapshot.docs.first.data();
+        final colorValue = classData['color'] as int?;
+        if (colorValue != null) {
+          return Color(colorValue);
+        }
+      }
+
+      // Always fallback to generated color
+      return _getSubjectColor(className);
+    } catch (e) {
+      // Always fallback to generated color on error
+      return _getSubjectColor(className);
+    }
+  }
+
+  // Add method to get default color for notes without subjects:
+  Color _getDefaultColor() {
+    return Colors.blueGrey[400]!; // Default color for notes without subjects
+  }
+
+  // Update the _getSubjectColor method to ensure it always returns a color:
+  Color _getSubjectColor(String subject) {
+    if (subject.isEmpty) return _getDefaultColor();
+
+    final hash = subject.toLowerCase().hashCode;
+    final colors = [
+      Colors.blue,
+      Colors.green,
+      Colors.orange,
+      Colors.purple,
+      Colors.red,
+      Colors.teal,
+      Colors.indigo,
+      Colors.pink,
+      Colors.amber,
+      Colors.cyan,
+      Colors.deepOrange,
+      Colors.lightGreen,
+    ];
+    return colors[hash.abs() % colors.length];
+  }
+
+  String _formatDateTime(DateTime dateTime) {
+    final now = DateTime.now();
+    final difference = now.difference(dateTime);
+
+    if (difference.inDays == 0) {
+      final hour =
+          dateTime.hour == 0
+              ? 12
+              : dateTime.hour > 12
+              ? dateTime.hour - 12
+              : dateTime.hour;
+      final minute = dateTime.minute.toString().padLeft(2, '0');
+      final period = dateTime.hour >= 12 ? 'PM' : 'AM';
+      return '$hour:$minute $period';
+    } else if (difference.inDays == 1) {
+      return 'Yesterday';
+    } else if (difference.inDays < 7) {
+      final weekdays = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
+      return weekdays[dateTime.weekday - 1];
+    } else {
+      return '${dateTime.day}/${dateTime.month}/${dateTime.year}';
+    }
   }
 }
 
+// ✅ AddNoteScreen
 class AddNoteScreen extends StatefulWidget {
+  final VoidCallback onBack;
   final String? initialTitle;
-  final String? initialContent;
   final String? docId;
-  final String? initialImagePath;
-  final String? initialFilePath;
-  final String? initialAudioPath;
   final String? initialSubject;
 
   const AddNoteScreen({
     super.key,
+    required this.onBack,
     this.initialTitle,
-    this.initialContent,
     this.docId,
-    this.initialImagePath,
-    this.initialFilePath,
-    this.initialAudioPath,
     this.initialSubject,
   });
 
@@ -428,331 +542,349 @@ class AddNoteScreen extends StatefulWidget {
   State<AddNoteScreen> createState() => _AddNoteScreenState();
 }
 
-class _AddNoteScreenState extends State<AddNoteScreen> {
-  final TextEditingController _titleController = TextEditingController();
-  final TextEditingController _contentController = TextEditingController();
-  List<Map<String, dynamic>> _attachments = [];
-  bool _isRecording = false;
-  final recorder = FlutterSoundRecorder();
-  String? _pendingAudioPath;
-  String? _selectedSubject;
-  List<String> _subjects = [];
-  bool _subjectsLoading = true;
-  final Set<int> _selectedAttachments = {};
+class _AddNoteScreenState extends State<AddNoteScreen> with WidgetsBindingObserver {
+  final TextEditingController titleController = TextEditingController();
+  final TextEditingController contentController = TextEditingController();
+  final FocusNode titleFocusNode = FocusNode();
+  final FocusNode contentFocusNode = FocusNode();
+
+  List<String> _uploadedImageIds = [];
+  bool _isLoadingImages = false;
+  List<Map<String, dynamic>> attachments = [];
+  String? selectedSubject;
+  List<String> subjects = [];
+  bool subjectsLoading = true;
+  List<Task> _tasks = [];
+  final Set<int> selectedAttachments = {};
   
-  // Drawing functionality
-  bool _isDrawingMode = false;
-  List<DrawingPoint> _drawingPoints = <DrawingPoint>[];
-  List<List<DrawingPoint>> _drawingHistory = [];
-  int _historyIndex = -1;
-  Color _selectedColor = Colors.blue;
-  bool _isErasing = false;
-  double _strokeWidth = 3.0;
-  bool _showColorPalette = false;
-  bool _showBrushSizes = false;
-  
-  // Available colors and brush sizes from helpers
-  late final List<Color> _drawingColors = DrawingHelper.getDefaultColors();
-  late final List<double> _brushSizes = DrawingHelper.getDefaultBrushSizes();
-
-  String get uid => FirebaseAuth.instance.currentUser!.uid;
-
-  // Enhanced helper method for safe field access
-  String _getFieldSafely(Map<String, dynamic>? data, String fieldName, [String defaultValue = '']) {
-    try {
-      if (data == null || !data.containsKey(fieldName)) {
-        return defaultValue;
-      }
-      final value = data[fieldName];
-      if (value == null) {
-        return defaultValue;
-      }
-      return value.toString().trim();
-    } catch (e) {
-      print('Error accessing field "$fieldName": $e');
-      return defaultValue;
-    }
-  }
-
-  // Drawing methods
-  void _addDrawingPoint(Offset point) {
-    setState(() {
-      _drawingPoints.add(DrawingPoint(
-        offset: point,
-        color: _selectedColor,
-        strokeWidth: _strokeWidth,
-        isEraser: _isErasing,
-      ));
-    });
-  }
-
-  void _addDrawingNull() {
-    setState(() {
-      _drawingPoints.add(DrawingPoint(
-        offset: null,
-        color: _selectedColor,
-        strokeWidth: _strokeWidth,
-        isEraser: _isErasing,
-      ));
-      _saveToHistory();
-    });
-  }
-
-  void _saveToHistory() {
-    DrawingHelper.saveToHistory(
-      _drawingHistory,
-      _drawingPoints,
-      _historyIndex,
-      (newHistory, newIndex) {
-        setState(() {
-          _drawingHistory = newHistory;
-          _historyIndex = newIndex;
-        });
-      },
-    );
-  }
-
-  void _clearDrawing() async {
-    final confirm = await showDialog<bool>(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('Clear Drawing'),
-        content: const Text('Are you sure you want to clear the entire drawing? This action cannot be undone.'),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context, false),
-            child: const Text('Cancel'),
-          ),
-          TextButton(
-            onPressed: () => Navigator.pop(context, true),
-            child: const Text('Clear', style: TextStyle(color: Colors.red)),
-          ),
-        ],
-      ),
-    );
-
-    if (confirm == true) {
-      setState(() {
-        _drawingPoints.clear();
-        _saveToHistory();
-      });
-    }
-  }
-
-  void _toggleDrawingMode() {
-    setState(() {
-      _isDrawingMode = !_isDrawingMode;
-      _showColorPalette = false;
-      _showBrushSizes = false;
-      
-      // Initialize history properly
-      if (_isDrawingMode && _drawingHistory.isEmpty) {
-        _drawingHistory.add(List<DrawingPoint>.from(_drawingPoints));
-        _historyIndex = 0;
-      }
-    });
-    
-    if (_isDrawingMode) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('Drawing mode enabled. Use the toolbar below!'),
-          duration: Duration(seconds: 2),
-        ),
-      );
-    }
-  }
-
-  void _selectColor(Color color) {
-    setState(() {
-      _selectedColor = color;
-      _isErasing = false;
-      _showColorPalette = false;
-    });
-  }
-
-  void _selectBrushSize(double size) {
-    setState(() {
-      _strokeWidth = size;
-      _showBrushSizes = false;
-    });
-  }
-
-  void _toggleEraser() {
-    setState(() {
-      _isErasing = !_isErasing;
-      _showColorPalette = false;
-      _showBrushSizes = false;
-    });
-  }
-
-  void _toggleColorPalette() {
-    setState(() {
-      _showColorPalette = !_showColorPalette;
-      _showBrushSizes = false;
-    });
-  }
-
-  void _toggleBrushSizes() {
-    setState(() {
-      _showBrushSizes = !_showBrushSizes;
-      _showColorPalette = false;
-    });
-  }
-
-  void _undo() {
-    if (_historyIndex > 0) {
-      setState(() {
-        _historyIndex--;
-        _drawingPoints = List<DrawingPoint>.from(_drawingHistory[_historyIndex]);
-      });
-    }
-  }
-
-  void _redo() {
-    if (_historyIndex < _drawingHistory.length - 1) {
-      setState(() {
-        _historyIndex++;
-        _drawingPoints = List<DrawingPoint>.from(_drawingHistory[_historyIndex]);
-      });
-    }
-  }
+  // Add these variables for autosave functionality
+  Timer? _autosaveTimer;
+  bool _hasUnsavedChanges = false;
+  String _lastSavedTitle = '';
+  String _lastSavedContent = '';
 
   @override
   void initState() {
     super.initState();
-    if (widget.initialTitle != null) {
-      _titleController.text = widget.initialTitle!;
-    }
-    if (widget.initialContent != null) {
-      _contentController.text = widget.initialContent!;
-    }
-    _selectedSubject = widget.initialSubject;
+    WidgetsBinding.instance.addObserver(this); // Add lifecycle observer
 
-    _attachments = [];
-    if (widget.initialImagePath != null && widget.initialImagePath!.isNotEmpty) {
-      _attachments.add({'type': 'image', 'path': widget.initialImagePath!});
+    if (widget.initialTitle != null) {
+      titleController.text = widget.initialTitle!;
+      _lastSavedTitle = widget.initialTitle!;
     }
-    if (widget.initialFilePath != null && widget.initialFilePath!.isNotEmpty) {
-      _attachments.add({'type': 'file', 'path': widget.initialFilePath!});
-    }
-    if (widget.initialAudioPath != null && widget.initialAudioPath!.isNotEmpty) {
-      _attachments.add({'type': 'audio', 'path': widget.initialAudioPath!});
-    }
+
+    selectedSubject = widget.initialSubject;
+    attachments = [];
 
     fetchSubjects();
-    _initializeRecorder();
+    _loadExistingTasks();
+    _loadExistingImages();
+
+    // Add listeners to detect changes
+    titleController.addListener(_onContentChanged);
+    contentController.addListener(_onContentChanged);
+
+    // Set up autosave timer
+    _setupAutosave();
+
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (widget.docId == null) {
+        titleFocusNode.requestFocus();
+      }
+    });
+  }
+
+  // Fetch the list of subjects from Firestore
+  Future<void> fetchSubjects() async {
+    setState(() {
+      subjectsLoading = true;
+    });
+    try {
+      final user = FirebaseAuth.instance.currentUser;
+      if (user == null) {
+        setState(() {
+          subjects = [];
+          subjectsLoading = false;
+        });
+        return;
+      }
+      final snapshot = await FirebaseFirestore.instance
+          .collection('users')
+          .doc(user.uid)
+          .collection('Classes')
+          .get();
+      setState(() {
+        subjects = snapshot.docs.map((doc) => doc['title'] as String).toList();
+        subjectsLoading = false;
+      });
+    } catch (e) {
+      setState(() {
+        subjects = [];
+        subjectsLoading = false;
+      });
+    }
+  }
+
+  // Load existing tasks for editing a note
+  Future<void> _loadExistingTasks() async {
+    if (widget.docId == null) return;
+    final user = FirebaseAuth.instance.currentUser;
+    if (user == null) return;
+    final doc = await FirebaseFirestore.instance
+        .collection('users')
+        .doc(user.uid)
+        .collection('Notes')
+        .doc(widget.docId)
+        .get();
+    if (doc.exists) {
+      final data = doc.data();
+      if (data != null && data['tasks'] != null) {
+        setState(() {
+          _tasks = (data['tasks'] as List)
+              .map((task) => Task(
+                    id: DateTime.now().millisecondsSinceEpoch.toString(),
+                    title: task['title'] ?? '',
+                    isCompleted: task['isCompleted'] ?? false,
+                  ))
+              .toList();
+        });
+      }
+    }
+  }
+
+  // Load existing images for editing a note
+  Future<void> _loadExistingImages() async {
+    if (widget.docId == null) return;
+    setState(() {
+      _isLoadingImages = true;
+    });
+    final user = FirebaseAuth.instance.currentUser;
+    if (user == null) {
+      setState(() {
+        _isLoadingImages = false;
+      });
+      return;
+    }
+    final doc = await FirebaseFirestore.instance
+        .collection('users')
+        .doc(user.uid)
+        .collection('Notes')
+        .doc(widget.docId)
+        .get();
+    if (doc.exists) {
+      final data = doc.data();
+      if (data != null && data['imageIds'] != null) {
+        setState(() {
+          _uploadedImageIds = List<String>.from(data['imageIds']);
+        });
+      }
+    }
+    setState(() {
+      _isLoadingImages = false;
+    });
   }
 
   @override
   void dispose() {
-    _titleController.dispose();
-    _contentController.dispose();
-    recorder.closeRecorder();
+    WidgetsBinding.instance.removeObserver(this); // Remove lifecycle observer
+    
+    // Save before disposing if there are unsaved changes
+    if (_hasUnsavedChanges) {
+      _saveNoteQuietly();
+    }
+    
+    _autosaveTimer?.cancel();
+    titleController.removeListener(_onContentChanged);
+    contentController.removeListener(_onContentChanged);
+    titleController.dispose();
+    contentController.dispose();
+    titleFocusNode.dispose();
+    contentFocusNode.dispose();
     super.dispose();
   }
 
-  Future<void> _initializeRecorder() async {
-    try {
-      await recorder.openRecorder();
-    } catch (e) {
-      print('Failed to initialize recorder: $e');
+  // Handle app lifecycle changes
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    super.didChangeAppLifecycleState(state);
+    
+    if (state == AppLifecycleState.paused || 
+        state == AppLifecycleState.inactive || 
+        state == AppLifecycleState.detached) {
+      // App is being paused/minimized/closed - save progress
+      if (_hasUnsavedChanges) {
+        _saveNoteQuietly();
+      }
     }
   }
 
-  Future<void> fetchSubjects() async {
-    try {
-      setState(() {
-        _subjectsLoading = true;
-      });
-      
-      // Fixed: Use per-user Classes collection
-      final snapshot = await FirebaseFirestore.instance
-          .collection('users')
-          .doc(uid)
-          .collection('Classes')
-          .get();
-      final uniqueSubjects = <String>{};
-      
-      for (final doc in snapshot.docs) {
-        try {
-          final data = doc.data();
-          final title = _getFieldSafely(data, 'title');
-          if (title.isNotEmpty) {
-            uniqueSubjects.add(title);
-          }
-        } catch (e) {
-          print('Error processing document ${doc.id}: $e');
-        }
+  // Set up autosave functionality
+  void _setupAutosave() {
+    _autosaveTimer = Timer.periodic(const Duration(seconds: 30), (timer) {
+      if (_hasUnsavedChanges) {
+        _saveNoteQuietly();
       }
-      
+    });
+  }
+
+  // Detect content changes
+  void _onContentChanged() {
+    final currentTitle = titleController.text.trim();
+    final currentContent = contentController.text.trim();
+    
+    if (currentTitle != _lastSavedTitle || currentContent != _lastSavedContent) {
       setState(() {
-        _subjects = uniqueSubjects.toList();
-        _subjectsLoading = false;
-        if (_selectedSubject != null && !_subjects.contains(_selectedSubject)) {
-          _subjects.add(_selectedSubject!);
-        }
-      });
-    } catch (e) {
-      print('Error fetching subjects: $e');
-      setState(() {
-        _subjects = [];
-        _subjectsLoading = false;
+        _hasUnsavedChanges = true;
       });
     }
   }
 
-  void _saveNote() async {
+  // Silent save without user feedback
+  Future<void> _saveNoteQuietly() async {
     try {
-      final title = _titleController.text.trim();
-      final content = _contentController.text.trim();
+      final user = FirebaseAuth.instance.currentUser;
+      if (user == null) return;
 
-      String imagePath = '';
-      String filePath = '';
-      String audioPath = '';
+      final currentTitle = titleController.text.trim();
+      final currentContent = contentController.text.trim();
 
-      for (final att in _attachments) {
-        if (att['type'] == 'image' && imagePath.isEmpty) imagePath = att['path'];
-        if (att['type'] == 'file' && filePath.isEmpty) filePath = att['path'];
-        if (att['type'] == 'audio' && audioPath.isEmpty) audioPath = att['path'];
+      // Don't save if both title and content are empty
+      if (currentTitle.isEmpty && currentContent.isEmpty && _tasks.isEmpty && _uploadedImageIds.isEmpty) {
+        return;
       }
 
-      final Map<String, dynamic> noteData = {
-        'title': title,
-        'content': content,
-        'imagePath': imagePath,
-        'filePath': filePath,
-        'audioPath': audioPath,
-        'subject': (_selectedSubject ?? '').trim(),
-        'subject_normalized': (_selectedSubject ?? '').trim().toLowerCase(),
+      final noteData = {
+        'title': currentTitle.isEmpty ? 'Untitled' : currentTitle,
+        'content': currentContent,
+        'subject': selectedSubject,
+        'tasks': _tasks.map((task) => {
+          'title': task.title,
+          'isCompleted': task.isCompleted,
+        }).toList(),
+        'attachments': attachments,
+        'imageIds': _uploadedImageIds,
         'updatedAt': FieldValue.serverTimestamp(),
+        'userId': user.uid,
       };
 
-      if (widget.docId != null && widget.docId!.isNotEmpty) {
-        // Fixed: Use per-user Notes collection for updates
+      if (widget.docId != null) {
         await FirebaseFirestore.instance
             .collection('users')
-            .doc(uid)
+            .doc(user.uid)
             .collection('Notes')
             .doc(widget.docId)
             .update(noteData);
       } else {
         noteData['createdAt'] = FieldValue.serverTimestamp();
-        // Fixed: Use per-user Notes collection for new notes
-        await FirebaseFirestore.instance
+        final docRef = await FirebaseFirestore.instance
             .collection('users')
-            .doc(uid)
+            .doc(user.uid)
             .collection('Notes')
             .add(noteData);
+
+        // Update image references with the new note ID
+        for (final imageId in _uploadedImageIds) {
+          await FirebaseFirestore.instance
+              .collection('users')
+              .doc(user.uid)
+              .collection('images')
+              .doc(imageId)
+              .update({'noteId': docRef.id});
+        }
       }
 
+      // Update tracking variables
+      _lastSavedTitle = currentTitle;
+      _lastSavedContent = currentContent;
+      setState(() {
+        _hasUnsavedChanges = false;
+      });
+
+      print('Note autosaved successfully'); // Debug log
+    } catch (e) {
+      print('Error during autosave: $e'); // Debug log
+    }
+  }
+
+  // Enhanced save method with user feedback
+  Future<void> saveNoteWithImages() async {
+    try {
+      final user = FirebaseAuth.instance.currentUser;
+      if (user == null) return;
+
+      final currentTitle = titleController.text.trim();
+      final currentContent = contentController.text.trim();
+
+      final noteData = {
+        'title': currentTitle.isEmpty ? 'Untitled' : currentTitle,
+        'content': currentContent,
+        'subject': selectedSubject,
+        'tasks': _tasks.map((task) => {
+          'title': task.title,
+          'isCompleted': task.isCompleted,
+        }).toList(),
+        'attachments': attachments,
+        'imageIds': _uploadedImageIds,
+        'updatedAt': FieldValue.serverTimestamp(),
+        'userId': user.uid,
+      };
+
+      if (widget.docId != null) {
+        await FirebaseFirestore.instance
+            .collection('users')
+            .doc(user.uid)
+            .collection('Notes')
+            .doc(widget.docId)
+            .update(noteData);
+      } else {
+        noteData['createdAt'] = FieldValue.serverTimestamp();
+        final docRef = await FirebaseFirestore.instance
+            .collection('users')
+            .doc(user.uid)
+            .collection('Notes')
+            .add(noteData);
+
+        for (final imageId in _uploadedImageIds) {
+          await FirebaseFirestore.instance
+              .collection('users')
+              .doc(user.uid)
+              .collection('images')
+              .doc(imageId)
+              .update({'noteId': docRef.id});
+        }
+      }
+
+      // Update tracking variables
+      _lastSavedTitle = currentTitle;
+      _lastSavedContent = currentContent;
+      setState(() {
+        _hasUnsavedChanges = false;
+      });
+
       if (mounted) {
-        Navigator.pop(context);
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Row(
+              children: [
+                Icon(Icons.check_circle, color: Colors.white, size: 20),
+                SizedBox(width: 12),
+                Text('Note saved successfully!'),
+              ],
+            ),
+            backgroundColor: Colors.green,
+            behavior: SnackBarBehavior.floating,
+            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+            margin: EdgeInsets.all(16),
+            duration: Duration(seconds: 2),
+          ),
+        );
+        widget.onBack();
       }
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Text('Error saving note: ${e.toString()}'),
+            content: Text('Error saving note: $e'),
             backgroundColor: Colors.red,
           ),
         );
@@ -760,462 +892,985 @@ class _AddNoteScreenState extends State<AddNoteScreen> {
     }
   }
 
-  Future<void> _pickAndSaveImage() async {
-    final path = await AttachmentManager.pickAndSaveImage();
-    if (path != null) {
-      setState(() {
-        _attachments.add({'type': 'image', 'path': path});
-      });
-    }
-  }
+  // Handle back button press with autosave
+  Future<bool> _onWillPop() async {
+    if (_hasUnsavedChanges) {
+      // Show save dialog
+      final shouldSave = await showDialog<bool>(
+        context: context,
+        builder: (context) => AlertDialog(
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+          title: Row(
+            children: [
+              Icon(Icons.save, color: Colors.orange, size: 24),
+              SizedBox(width: 12),
+              Text(
+                'Save Changes?',
+                style: GoogleFonts.inter(fontWeight: FontWeight.w700),
+              ),
+            ],
+          ),
+          content: Text(
+            'You have unsaved changes. Do you want to save them before leaving?',
+            style: GoogleFonts.inter(fontSize: 16),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context, false),
+              child: Text(
+                'Discard',
+                style: GoogleFonts.inter(
+                  color: Colors.red,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+            ),
+            TextButton(
+              onPressed: () => Navigator.pop(context, null),
+              child: Text(
+                'Cancel',
+                style: GoogleFonts.inter(
+                  color: Colors.grey[600],
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+            ),
+            ElevatedButton(
+              onPressed: () => Navigator.pop(context, true),
+              style: ElevatedButton.styleFrom(
+                backgroundColor: Colors.green,
+                foregroundColor: Colors.white,
+                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+              ),
+              child: Text(
+                'Save',
+                style: GoogleFonts.inter(fontWeight: FontWeight.w600),
+              ),
+            ),
+          ],
+        ),
+      );
 
-  Future<void> _pickAndSaveFile() async {
-    final path = await AttachmentManager.pickAndSaveFile();
-    if (path != null) {
-      setState(() {
-        _attachments.add({'type': 'file', 'path': path});
-      });
-    }
-  }
-
-  Future<void> _recordOrStopAudio() async {
-    if (!_isRecording) {
-      final path = await AttachmentManager.recordAudio(recorder);
-      if (path != null) {
-        setState(() {
-          _isRecording = true;
-        });
-        _pendingAudioPath = path;
+      if (shouldSave == true) {
+        await _saveNoteQuietly();
+        return true;
+      } else if (shouldSave == false) {
+        return true; // Discard changes and leave
       } else {
-        if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(content: Text('Microphone permission is required for recording')),
-          );
-        }
+        return false; // Cancel - stay on page
       }
-    } else {
-      await AttachmentManager.stopRecording(recorder);
-      setState(() {
-        _isRecording = false;
-        _attachments.removeWhere((att) => att['type'] == 'audio');
-        if (_pendingAudioPath != null) {
-          _attachments.add({'type': 'audio', 'path': _pendingAudioPath!});
-        }
-      });
     }
+    return true; // No unsaved changes, allow back
   }
 
-  void _showAttachmentOptions() {
-    showModalBottomSheet(
-      context: context,
-      builder: (context) => AttachmentOptionsBottomSheet(
-        isRecording: _isRecording,
-        onPickImage: _pickAndSaveImage,
-        onPickFile: _pickAndSaveFile,
-        onToggleRecording: _recordOrStopAudio,
+  // Update the AddNoteScreen class to include autosave functionality:
+
+  // Rest of your existing methods remain the same...
+  // (fetchSubjects, showSubjectSelection, etc.)
+
+  @override
+  Widget build(BuildContext context) {
+    return WillPopScope(
+      onWillPop: _onWillPop, // Handle back button
+      child: Scaffold(
+        backgroundColor: Colors.white,
+        appBar: AppBar(
+          centerTitle: false,
+          elevation: 0,
+          backgroundColor: Colors.white,
+          iconTheme: const IconThemeData(color: Colors.black),
+          leading: IconButton(
+            icon: const Icon(Icons.arrow_back),
+            onPressed: () async {
+              final shouldPop = await _onWillPop();
+              if (shouldPop) {
+                widget.onBack();
+              }
+            },
+          ),
+          title: Row(
+            children: [
+              // Existing title logic...
+              widget.docId == null
+                  ? Row(
+                      children: [
+                        if (selectedSubject != null && selectedSubject!.isNotEmpty)
+                          Container(
+                            margin: const EdgeInsets.only(right: 12),
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 12,
+                              vertical: 8,
+                            ),
+                            decoration: BoxDecoration(
+                              color: getSubjectColor(selectedSubject!).withOpacity(0.1),
+                              borderRadius: BorderRadius.circular(20),
+                              border: Border.all(
+                                color: getSubjectColor(selectedSubject!).withOpacity(0.3),
+                                width: 1,
+                              ),
+                            ),
+                            child: Row(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                Container(
+                                  width: 8,
+                                  height: 8,
+                                  decoration: BoxDecoration(
+                                    color: getSubjectColor(selectedSubject!),
+                                    shape: BoxShape.circle,
+                                  ),
+                                ),
+                                const SizedBox(width: 8),
+                                Icon(
+                                  Icons.book,
+                                  color: getSubjectColor(selectedSubject!),
+                                  size: 16,
+                                ),
+                                const SizedBox(width: 6),
+                                Text(
+                                  selectedSubject!,
+                                  style: GoogleFonts.roboto(
+                                    fontSize: 14,
+                                    color: getSubjectColor(selectedSubject!),
+                                    fontWeight: FontWeight.bold,
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                        Text(
+                          'Add Note',
+                          style: GoogleFonts.dmSerifText(
+                            fontSize: 28,
+                            color: Colors.black,
+                          ),
+                        ),
+                        // Show unsaved indicator
+                        if (_hasUnsavedChanges)
+                          Container(
+                            margin: const EdgeInsets.only(left: 8),
+                            child: Icon(
+                              Icons.circle,
+                              color: Colors.orange,
+                              size: 8,
+                            ),
+                          ),
+                      ],
+                    )
+                  : Row(
+                      children: [
+                        if (selectedSubject != null && selectedSubject!.isNotEmpty)
+                          Container(
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 12,
+                              vertical: 8,
+                            ),
+                            decoration: BoxDecoration(
+                              color: getSubjectColor(selectedSubject!).withOpacity(0.1),
+                              borderRadius: BorderRadius.circular(20),
+                              border: Border.all(
+                                color: getSubjectColor(selectedSubject!).withOpacity(0.3),
+                                width: 1,
+                              ),
+                            ),
+                            child: Row(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                Container(
+                                  width: 8,
+                                  height: 8,
+                                  decoration: BoxDecoration(
+                                    color: getSubjectColor(selectedSubject!),
+                                    shape: BoxShape.circle,
+                                  ),
+                                ),
+                                const SizedBox(width: 8),
+                                Icon(
+                                  Icons.book,
+                                  color: getSubjectColor(selectedSubject!),
+                                  size: 16,
+                                ),
+                                const SizedBox(width: 6),
+                                Text(
+                                  selectedSubject!,
+                                  style: GoogleFonts.roboto(
+                                    fontSize: 14,
+                                    color: getSubjectColor(selectedSubject!),
+                                    fontWeight: FontWeight.bold,
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                        // Show unsaved indicator for existing notes too
+                        if (_hasUnsavedChanges)
+                          Container(
+                            margin: const EdgeInsets.only(left: 8),
+                            child: Icon(
+                              Icons.circle,
+                              color: Colors.orange,
+                              size: 8,
+                            ),
+                          ),
+                      ],
+                    ),
+            ],
+          ),
+          actions: [
+            IconButton(
+              icon: const Icon(Icons.menu_book, color: Colors.black, size: 28),
+              tooltip: 'Select Subject',
+              onPressed: showSubjectSelection,
+            ),
+            IconButton(
+              icon: Icon(
+                Icons.check,
+                color: _hasUnsavedChanges ? Colors.orange : Colors.black,
+              ),
+              tooltip: 'Save',
+              onPressed: saveNoteWithImages,
+            ),
+            if (_uploadedImageIds.isNotEmpty || attachments.isNotEmpty)
+              IconButton(
+                icon: const Icon(Icons.delete_forever, color: Colors.red),
+                tooltip: 'Delete All Attachments',
+                onPressed: () async {
+                  final confirmed = await showDialog<bool>(
+                    context: context,
+                    builder: (context) => AlertDialog(
+                      title: const Text('Delete all attachments?'),
+                      content: const Text(
+                        'Are you sure you want to delete all images and files from this note?',
+                      ),
+                      actions: [
+                        TextButton(
+                          onPressed: () => Navigator.pop(context, false),
+                          child: const Text('Cancel'),
+                        ),
+                        TextButton(
+                          onPressed: () => Navigator.pop(context, true),
+                          child: const Text(
+                            'Delete',
+                            style: TextStyle(color: Colors.red),
+                          ),
+                        ),
+                      ],
+                    ),
+                  );
+                  if (confirmed == true) {
+                    setState(() {
+                      _uploadedImageIds.clear();
+                      attachments.clear();
+                      _hasUnsavedChanges = true; // Mark as changed
+                    });
+                  }
+                },
+              ),
+          ],
+        ),
+        body: Column(
+          children: [
+            // Show autosave status indicator
+            if (_hasUnsavedChanges)
+              Container(
+                width: double.infinity,
+                padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 8),
+                color: Colors.orange[50],
+                child: Row(
+                  children: [
+                    Icon(Icons.edit, color: Colors.orange[700], size: 16),
+                    const SizedBox(width: 8),
+                    Text(
+                      'Unsaved changes - will auto-save in 30 seconds',
+                      style: GoogleFonts.inter(
+                        fontSize: 12,
+                        color: Colors.orange[700],
+                        fontWeight: FontWeight.w500,
+                      ),
+                    ),
+                    const Spacer(),
+                    TextButton(
+                      onPressed: () => _saveNoteQuietly(),
+                      style: TextButton.styleFrom(
+                        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
+                        minimumSize: Size.zero,
+                      ),
+                      child: Text(
+                        'Save now',
+                        style: GoogleFonts.inter(
+                          fontSize: 12,
+                          color: Colors.orange[700],
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            
+            Expanded(
+              child: SingleChildScrollView(
+                padding: const EdgeInsets.all(20.0),
+                child: Column(
+                  children: [
+                    // Title TextField
+                    TextField(
+                      controller: titleController,
+                      focusNode: titleFocusNode,
+                      style: GoogleFonts.dmSerifText(
+                        fontSize: 32,
+                        fontWeight: FontWeight.bold,
+                        color: Colors.black,
+                      ),
+                      decoration: InputDecoration(
+                        border: InputBorder.none,
+                        hintText: 'TITLE',
+                        hintStyle: GoogleFonts.dmSerifText(
+                          fontSize: 32,
+                          fontWeight: FontWeight.bold,
+                          color: Colors.grey[400],
+                          letterSpacing: 2,
+                        ),
+                        contentPadding: const EdgeInsets.symmetric(vertical: 8),
+                      ),
+                      textInputAction: TextInputAction.next,
+                      textCapitalization: TextCapitalization.characters,
+                      onEditingComplete: () {
+                        contentFocusNode.requestFocus();
+                      },
+                    ),
+                    const SizedBox(height: 20),
+
+                    // Content TextField
+                    TextField(
+                      controller: contentController,
+                      focusNode: contentFocusNode,
+                      style: GoogleFonts.inter(
+                        fontSize: 16,
+                        color: Colors.black87,
+                        height: 1.5,
+                      ),
+                      maxLines: null,
+                      minLines: 5,
+                      keyboardType: TextInputType.multiline,
+                      textInputAction: TextInputAction.newline,
+                      decoration: InputDecoration(
+                        border: InputBorder.none,
+                        hintText: 'Start writing your note...',
+                        hintStyle: TextStyle(
+                          color: Colors.grey[400],
+                          fontSize: 16,
+                        ),
+                        contentPadding: const EdgeInsets.all(16),
+                        filled: false,
+                        enabledBorder: InputBorder.none,
+                        focusedBorder: InputBorder.none,
+                        disabledBorder: InputBorder.none,
+                        errorBorder: InputBorder.none,
+                        focusedErrorBorder: InputBorder.none,
+                      ),
+                      cursorColor: selectedSubject != null && selectedSubject!.isNotEmpty
+                          ? getSubjectColor(selectedSubject!)
+                          : Colors.blue,
+                      enableInteractiveSelection: true,
+                    ),
+
+                    // Images Section
+                    if (_uploadedImageIds.isNotEmpty || _isLoadingImages)
+                      Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          const SizedBox(height: 20),
+                          Text(
+                            'Images',
+                            style: GoogleFonts.inter(
+                              fontSize: 16,
+                              fontWeight: FontWeight.bold,
+                              color: Colors.grey[700],
+                            ),
+                          ),
+                          const SizedBox(height: 12),
+                          if (_isLoadingImages)
+                            const Center(child: CircularProgressIndicator())
+                          else
+                            SizedBox(
+                              height: 180,
+                              child: ReorderableListView(
+                                scrollDirection: Axis.horizontal,
+                                onReorder: (oldIndex, newIndex) {
+                                  setState(() {
+                                    if (newIndex > oldIndex) newIndex -= 1;
+                                    final item = _uploadedImageIds.removeAt(
+                                      oldIndex,
+                                    );
+                                    _uploadedImageIds.insert(newIndex, item);
+                                  });
+                                },
+                                children: [
+                                  for (final imageId in _uploadedImageIds)
+                                    Container(
+                                      key: ValueKey(imageId),
+                                      margin: const EdgeInsets.only(right: 12),
+                                      child: FirestoreImageWidget(
+                                        imageId: imageId,
+                                        width: 150,
+                                        height: 150,
+                                        showDeleteButton: true,
+                                        onDelete: () => _removeImage(imageId),
+                                      ),
+                                    ),
+                                ],
+                              ),
+                            ),
+                        ],
+                      ),
+                    if (attachments.isNotEmpty)
+                      Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            'Attachments',
+                            style: GoogleFonts.inter(
+                              fontSize: 16,
+                              fontWeight: FontWeight.bold,
+                              color: Colors.grey[700],
+                            ),
+                          ),
+                          const SizedBox(height: 12),
+                          Container(
+                            decoration: BoxDecoration(
+                              color: Colors.grey[50],
+                              borderRadius: BorderRadius.circular(12),
+                              border: Border.all(color: Colors.grey[200]!),
+                            ),
+                            child: ReorderableListView(
+                              shrinkWrap: true,
+                              physics: const NeverScrollableScrollPhysics(),
+                              onReorder: (oldIndex, newIndex) {
+                                setState(() {
+                                  if (newIndex > oldIndex) newIndex -= 1;
+                                  final item = attachments.removeAt(oldIndex);
+                                  attachments.insert(newIndex, item);
+                                });
+                              },
+                              children: [
+                                for (int i = 0; i < attachments.length; i++)
+                                  Container(
+                                    key: ValueKey(attachments[i]['path']),
+                                    margin: const EdgeInsets.symmetric(
+                                      vertical: 4,
+                                    ),
+                                    child: ListTile(
+                                      leading: Container(
+                                        width: 40,
+                                        height: 40,
+                                        decoration: BoxDecoration(
+                                          color: Colors.blue[50],
+                                          borderRadius: BorderRadius.circular(8),
+                                        ),
+                                        child: Icon(
+                                          attachments[i]['type'] == 'image'
+                                              ? Icons.image
+                                              : Icons.attach_file,
+                                          color: Colors.blue[600],
+                                          size: 20,
+                                        ),
+                                      ),
+                                      title: Text(
+                                        attachments[i]['path'].split('/').last,
+                                        style: GoogleFonts.inter(
+                                          fontSize: 14,
+                                          fontWeight: FontWeight.w500,
+                                        ),
+                                      ),
+                                      subtitle: Text(
+                                        attachments[i]['type'].toUpperCase(),
+                                        style: GoogleFonts.inter(
+                                          fontSize: 12,
+                                          color: Colors.grey[600],
+                                        ),
+                                      ),
+                                      trailing: Row(
+                                        mainAxisSize: MainAxisSize.min,
+                                        children: [
+                                          Icon(
+                                            Icons.drag_handle,
+                                            color: Colors.grey[400],
+                                          ),
+                                          const SizedBox(width: 8),
+                                          IconButton(
+                                            icon: const Icon(
+                                              Icons.delete,
+                                              color: Colors.red,
+                                              size: 20,
+                                            ),
+                                            onPressed: () {
+                                              setState(() {
+                                                attachments.removeAt(i);
+                                              });
+                                            },
+                                          ),
+                                        ],
+                                      ),
+                                      onTap:
+                                          () =>
+                                            AttachmentManager.openFileAttachment(
+                                              context,
+                                              attachments[i],
+                                            ),
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                        ],
+                      ),
+                  ],
+                ),
+              ),
+            ),
+            NoteToolbar(
+              taskCount: _tasks.length,
+              onShowAttachmentOptions: showAttachmentOptions,
+              onShowImagePicker: _showImagePicker,
+            ),
+          ],
+        ),
       ),
     );
   }
 
-  void _showSubjectSelection() {
-    if (_subjectsLoading || _subjects.isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('No subjects available.')),
-      );
-      return;
+  void _removeImage(String imageId) {
+    setState(() {
+      _uploadedImageIds.remove(imageId);
+    });
+
+    // Optionally, show a confirmation snackbar
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Row(
+          children: [
+            Icon(Icons.check_circle, color: Colors.white, size: 20),
+            SizedBox(width: 12),
+            Text('Image removed from note'),
+          ],
+        ),
+        backgroundColor: Colors.orange,
+        behavior: SnackBarBehavior.floating,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+        margin: EdgeInsets.all(16),
+        duration: Duration(seconds: 2),
+      ),
+    );
+
+    // Optional: If you want to actually delete the image from Firestore/Storage
+    // Uncomment the following line:
+    // ImageHandler.deleteImage(imageId);
+  }
+
+  void _addTask(String taskTitle) {
+    if (taskTitle.trim().isNotEmpty) {
+      setState(() {
+        _tasks.add(
+          Task(
+            id: DateTime.now().millisecondsSinceEpoch.toString(),
+            title: taskTitle.trim(),
+            isCompleted: false,
+          ),
+        );
+      });
     }
-    
-    showDialog(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('Select Subject'),
-        content: SizedBox(
-          width: double.maxFinite,
-          child: ListView(
-            shrinkWrap: true,
-            children: [
-              ListTile(
-                title: const Text('None'),
-                onTap: () {
-                  setState(() {
-                    _selectedSubject = null;
-                  });
-                  Navigator.pop(context);
-                },
-                selected: _selectedSubject == null,
-                selectedTileColor: Colors.deepPurple[50],
+  }
+
+  void _toggleTask(int index) {
+    setState(() {
+      _tasks[index] = Task(
+        id: _tasks[index].id,
+        title: _tasks[index].title,
+        isCompleted: !_tasks[index].isCompleted,
+      );
+    });
+  }
+
+  void _removeTask(int index) {
+    setState(() {
+      _tasks.removeAt(index);
+    });
+  }
+
+  void _editTask(int index, String newTitle) {
+    if (newTitle.trim().isNotEmpty) {
+      setState(() {
+        _tasks[index] = Task(
+          id: _tasks[index].id,
+          title: newTitle.trim(),
+          isCompleted: _tasks[index].isCompleted,
+        );
+      });
+    }
+  }
+
+  // Update the getSubjectColor method to fetch from Firestore for consistency:
+  Future<Color> getClassColor(String subject) async {
+    try {
+      final user = FirebaseAuth.instance.currentUser;
+      if (user == null) return getSubjectColor(subject);
+
+      final snapshot =
+          await FirebaseFirestore.instance
+              .collection('users')
+              .doc(user.uid)
+              .collection('Classes')
+              .where('title', isEqualTo: subject)
+              .limit(1)
+              .get();
+
+      if (snapshot.docs.isNotEmpty) {
+        final classData = snapshot.docs.first.data();
+        final colorValue = classData['color'] as int?;
+        if (colorValue != null) {
+          return Color(colorValue);
+        }
+      }
+
+      return getSubjectColor(subject);
+    } catch (e) {
+      return getSubjectColor(subject);
+    }
+  }
+
+  Color getSubjectColor(String subject) {
+  if (subject.isEmpty) return Colors.blueGrey[400]!;
+
+  final hash = subject.toLowerCase().hashCode;
+  final colors = [
+    Colors.blue,
+    Colors.green,
+    Colors.orange,
+    Colors.purple,
+    Colors.red,
+    Colors.teal,
+    Colors.indigo,
+    Colors.pink,
+    Colors.amber,
+    Colors.cyan,
+    Colors.deepOrange,
+    Colors.lightGreen,
+  ];
+  return colors[hash.abs() % colors.length];
+}
+
+  void showSubjectSelection() {
+  showDialog(
+    context: context,
+    builder: (context) => AlertDialog(
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+      title: Text(
+        'Select Subject',
+        style: GoogleFonts.inter(
+          fontWeight: FontWeight.w700,
+          fontSize: 18,
+        ),
+      ),
+      content: SizedBox(
+        width: double.maxFinite,
+        child: subjectsLoading
+            ? const Center(child: CircularProgressIndicator())
+            : subjects.isEmpty
+                ? Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Icon(Icons.school_outlined, size: 48, color: Colors.grey),
+                      SizedBox(height: 16),
+                      Text(
+                        'No subjects found',
+                        style: GoogleFonts.inter(
+                          fontSize: 16,
+                          color: Colors.grey[600],
+                        ),
+                      ),
+                      SizedBox(height: 8),
+                      Text(
+                        'Create classes first to add subjects',
+                        style: GoogleFonts.inter(
+                          fontSize: 14,
+                          color: Colors.grey[500],
+                        ),
+                        textAlign: TextAlign.center,
+                      ),
+                    ],
+                  )
+                : ListView.builder(
+                    shrinkWrap: true,
+                    itemCount: subjects.length + 1,
+                    itemBuilder: (context, index) {
+                      if (index == 0) {
+                        return ListTile(
+                          leading: Icon(Icons.clear, color: Colors.grey[600]),
+                          title: Text(
+                            'No Subject',
+                            style: GoogleFonts.inter(
+                              fontSize: 16,
+                              color: Colors.grey[600],
+                            ),
+                          ),
+                          onTap: () {
+                            setState(() {
+                              selectedSubject = null;
+                            });
+                            Navigator.pop(context);
+                          },
+                        );
+                      }
+                      
+                      final subject = subjects[index - 1];
+                      final color = getSubjectColor(subject); // Now this method exists
+                      
+                      return ListTile(
+                        leading: Container(
+                          width: 24,
+                          height: 24,
+                          decoration: BoxDecoration(
+                            color: color,
+                            shape: BoxShape.circle,
+                          ),
+                        ),
+                        title: Text(
+                          subject,
+                          style: GoogleFonts.inter(fontSize: 16),
+                        ),
+                        trailing: selectedSubject == subject
+                            ? Icon(Icons.check, color: color)
+                            : null,
+                        onTap: () {
+                          setState(() {
+                            selectedSubject = subject;
+                          });
+                          Navigator.pop(context);
+                        },
+                      );
+                    },
+                  ),
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.pop(context),
+          child: Text(
+            'Cancel',
+            style: GoogleFonts.inter(
+              color: Colors.grey[600],
+              fontWeight: FontWeight.w600,
+            ),
+          ),
+        ),
+      ],
+    ),
+  );
+}
+
+void showAttachmentOptions() {
+  showModalBottomSheet(
+    context: context,
+    backgroundColor: Colors.transparent,
+    builder: (context) => Container(
+      decoration: const BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      child: SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            // Handle bar
+            Container(
+              width: 40,
+              height: 4,
+              margin: const EdgeInsets.symmetric(vertical: 12),
+              decoration: BoxDecoration(
+                color: Colors.grey[300],
+                borderRadius: BorderRadius.circular(2),
               ),
-              ..._subjects.map((subject) {
-                return ListTile(
-                  title: Text(subject),
-                  onTap: () {
-                    setState(() {
-                      _selectedSubject = subject;
-                    });
-                    Navigator.pop(context);
-                  },
-                  selected: _selectedSubject == subject,
-                  selectedTileColor: Colors.deepPurple[50],
+            ),
+            
+            // Title
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 8),
+              child: Text(
+                'Add Attachment',
+                style: GoogleFonts.inter(
+                  fontSize: 18,
+                  fontWeight: FontWeight.w600,
+                  color: Colors.black87,
+                ),
+              ),
+            ),
+            
+            const SizedBox(height: 8),
+            
+            // File option
+            ListTile(
+              leading: Container(
+                padding: const EdgeInsets.all(8),
+                decoration: BoxDecoration(
+                  color: Colors.purple[50],
+                  borderRadius: BorderRadius.circular(8),
+                ),
+                child: Icon(
+                  Icons.attach_file,
+                  color: Colors.purple[600],
+                  size: 24,
+                ),
+              ),
+              title: Text(
+                'Attach File',
+                style: GoogleFonts.inter(
+                  fontSize: 16,
+                  fontWeight: FontWeight.w500,
+                ),
+              ),
+              subtitle: Text(
+                'Select files from device storage',
+                style: GoogleFonts.inter(
+                  fontSize: 14,
+                  color: Colors.grey[600],
+                ),
+              ),
+              onTap: () {
+                Navigator.pop(context);
+                ScaffoldMessenger.of(context).showSnackBar(
+                  const SnackBar(
+                    content: Text('File picker not implemented yet'),
+                  ),
                 );
-              }),
+              },
+            ),
+            
+            const SizedBox(height: 16),
+          ],
+        ),
+      ),
+    ),
+  );
+}
+
+void _showImagePicker() {
+  try {
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: Colors.transparent,
+      builder: (context) => Container(
+        decoration: const BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+        ),
+        child: SafeArea(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              // Handle bar
+              Container(
+                width: 40,
+                height: 4,
+                margin: const EdgeInsets.symmetric(vertical: 12),
+                decoration: BoxDecoration(
+                  color: Colors.grey[300],
+                  borderRadius: BorderRadius.circular(2),
+                ),
+              ),
+              
+              // Title
+              Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 8),
+                child: Text(
+                  'Add Image',
+                  style: GoogleFonts.inter(
+                    fontSize: 18,
+                    fontWeight: FontWeight.w600,
+                    color: Colors.black87,
+                  ),
+                ),
+              ),
+              
+              const SizedBox(height: 8),
+              
+              // Gallery option
+              ListTile(
+                leading: Container(
+                  padding: const EdgeInsets.all(8),
+                  decoration: BoxDecoration(
+                    color: Colors.blue[50],
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                  child: Icon(
+                    Icons.photo_library,
+                    color: Colors.blue[600],
+                    size: 24,
+                  ),
+                ),
+                title: Text(
+                  'Choose from Gallery',
+                  style: GoogleFonts.inter(
+                    fontSize: 16,
+                    fontWeight: FontWeight.w500,
+                  ),
+                ),
+                onTap: () {
+                  Navigator.pop(context);
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    const SnackBar(
+                      content: Text('Gallery picker not implemented yet'),
+                      backgroundColor: Colors.orange,
+                    ),
+                  );
+                },
+              ),
+              
+              // Camera option
+              ListTile(
+                leading: Container(
+                  padding: const EdgeInsets.all(8),
+                  decoration: BoxDecoration(
+                    color: Colors.green[50],
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                  child: Icon(
+                    Icons.camera_alt,
+                    color: Colors.green[600],
+                    size: 24,
+                  ),
+                ),
+                title: Text(
+                  'Take Photo',
+                  style: GoogleFonts.inter(
+                    fontSize: 16,
+                    fontWeight: FontWeight.w500,
+                  ),
+                ),
+                onTap: () {
+                  Navigator.pop(context);
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    const SnackBar(
+                      content: Text('Camera not implemented yet'),
+                      backgroundColor: Colors.orange,
+                    ),
+                  );
+                },
+              ),
+              
+              const SizedBox(height: 16),
             ],
           ),
         ),
       ),
     );
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return Scaffold(
-      backgroundColor: Colors.white,
-      appBar: AppBar(
-        centerTitle: true,
-        elevation: 0,
-        backgroundColor: Colors.white,
-        iconTheme: const IconThemeData(color: Colors.black),
-        title: Text(
-          widget.docId != null ? 'Edit Note' : 'Add Note',
-          style: GoogleFonts.dmSerifText(
-            fontSize: 28,
-            color: Colors.black,
-          ),
-        ),
-        actions: [
-          if (_isDrawingMode) ...[
-            IconButton(
-              icon: Icon(
-                Icons.undo,
-                color: _historyIndex > 0 ? Colors.blue : Colors.grey,
-              ),
-              onPressed: _historyIndex > 0 ? _undo : null,
-              tooltip: 'Undo',
-            ),
-            IconButton(
-              icon: Icon(
-                Icons.redo,
-                color: _historyIndex < _drawingHistory.length - 1 ? Colors.blue : Colors.grey,
-              ),
-              onPressed: _historyIndex < _drawingHistory.length - 1 ? _redo : null,
-              tooltip: 'Redo',
-            ),
-            TextButton(
-              onPressed: _toggleDrawingMode,
-              child: Text(
-                'Done',
-                style: GoogleFonts.roboto(
-                  fontSize: 18,
-                  fontWeight: FontWeight.bold,
-                  color: Colors.blue,
-                ),
-              ),
-            ),
-          ] else ...[
-            IconButton(
-              icon: const Icon(Icons.menu_book, color: Colors.black, size: 28),
-              tooltip: 'Select Subject',
-              onPressed: _showSubjectSelection,
-            ),
-            IconButton(
-              icon: const Icon(Icons.check, color: Colors.black),
-              tooltip: 'Save',
-              onPressed: _saveNote,
-            ),
-          ],
-        ],
-      ),
-      body: Column(
-        children: [
-          Expanded(
-            child: Stack(
-              children: [
-                Padding(
-                  padding: const EdgeInsets.all(20.0),
-                  child: Column(
-                    children: [
-                      if (_selectedSubject != null && _selectedSubject!.isNotEmpty)
-                        Padding(
-                          padding: const EdgeInsets.only(bottom: 8.0),
-                          child: Row(
-                            children: [
-                              const Icon(Icons.book, color: Colors.deepPurple),
-                              const SizedBox(width: 8),
-                              Text(
-                                _selectedSubject!,
-                                style: GoogleFonts.roboto(
-                                  fontSize: 16,
-                                  color: Colors.deepPurple,
-                                  fontWeight: FontWeight.bold,
-                                ),
-                              ),
-                            ],
-                          ),
-                        ),
-                      TextField(
-                        controller: _titleController,
-                        enabled: !_isDrawingMode,
-                        style: GoogleFonts.dmSerifText(
-                          fontSize: 32,
-                          fontWeight: FontWeight.bold,
-                          color: Colors.black,
-                        ),
-                        decoration: InputDecoration(
-                          border: InputBorder.none,
-                          hintText: 'TITLE',
-                          hintStyle: GoogleFonts.dmSerifText(
-                            fontSize: 32,
-                            fontWeight: FontWeight.bold,
-                            color: Colors.grey[400],
-                            letterSpacing: 2,
-                          ),
-                          contentPadding: const EdgeInsets.symmetric(vertical: 8),
-                        ),
-                        textInputAction: TextInputAction.next,
-                        textCapitalization: TextCapitalization.characters,
-                        inputFormatters: [
-                          UpperCaseTextFormatter(),
-                        ],
-                      ),
-                      Expanded(
-                        child: GestureDetector(
-                          onTapDown: _isDrawingMode ? null : (details) => TodoHelper.toggleTodoCompletion(
-                            _contentController, 
-                            details, 
-                            GoogleFonts.roboto(
-                              fontSize: 18,
-                              fontWeight: FontWeight.normal,
-                              color: Colors.black87,
-                              letterSpacing: 0.1,
-                            )
-                          ),
-                          onPanUpdate: _isDrawingMode ? (details) => _addDrawingPoint(details.localPosition) : null,
-                          onPanEnd: _isDrawingMode ? (details) => _addDrawingNull() : null,
-                          child: TextField(
-                            controller: _contentController,
-                            enabled: !_isDrawingMode,
-                            onChanged: (value) => TodoHelper.handleTextChange(_contentController, value),
-                            style: GoogleFonts.roboto(
-                              fontSize: 18,
-                              fontWeight: FontWeight.normal,
-                              color: Colors.black87,
-                              letterSpacing: 0.1,
-                            ),
-                            decoration: InputDecoration(
-                              border: InputBorder.none,
-                              hintText: _isDrawingMode ? 'Drawing mode - Use toolbar below to draw!' : 'Write your note here...',
-                              hintStyle: GoogleFonts.roboto(
-                                fontSize: 18,
-                                color: Colors.grey[400],
-                                fontStyle: FontStyle.italic,
-                              ),
-                              contentPadding: const EdgeInsets.symmetric(vertical: 8),
-                            ),
-                            maxLines: null,
-                            expands: true,
-                            textInputAction: TextInputAction.newline,
-                          ),
-                        ),
-                      ),
-                      // Add text statistics
-                      if (!_isDrawingMode && _contentController.text.isNotEmpty)
-                        Padding(
-                          padding: const EdgeInsets.only(bottom: 8.0),
-                          child: Row(
-                            children: [
-                              TextStatistics(text: _contentController.text),
-                              const SizedBox(width: 8),
-                              TodoStatistics(text: _contentController.text),
-                            ],
-                          ),
-                        ),
-                      if (_attachments.isNotEmpty && !_isDrawingMode)
-                        AttachmentList(
-                          attachments: _attachments,
-                          selectedAttachments: _selectedAttachments,
-                          onToggleSelection: (index) {
-                            setState(() {
-                              if (_selectedAttachments.contains(index)) {
-                                _selectedAttachments.remove(index);
-                              } else {
-                                _selectedAttachments.add(index);
-                              }
-                            });
-                          },
-                          onRemoveSelected: () {
-                            setState(() {
-                              _selectedAttachments.toList()
-                                ..sort((a, b) => b.compareTo(a))
-                                ..forEach((i) => _attachments.removeAt(i));
-                              _selectedAttachments.clear();
-                            });
-                          },
-                        ),
-                    ],
-                  ),
-                ),
-                
-                // Drawing layer
-                if (_isDrawingMode)
-                  Positioned.fill(
-                    child: GestureDetector(
-                      onPanUpdate: (details) => _addDrawingPoint(details.localPosition),
-                      onPanEnd: (details) => _addDrawingNull(),
-                      child: CustomPaint(
-                        painter: DrawingPainter(_drawingPoints),
-                        size: Size.infinite,
-                      ),
-                    ),
-                  ),
-              ],
-            ),
-          ),
-          
-          // Fixed toolbar section
-          Container(
-            decoration: BoxDecoration(
-              color: Colors.white,
-              border: Border(top: BorderSide(color: Colors.grey[300]!)),
-              boxShadow: [
-                BoxShadow(
-                  color: Colors.black.withOpacity(0.1),
-                  blurRadius: 4,
-                  offset: const Offset(0, -2),
-                ),
-              ],
-            ),
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                // Main toolbar
-                Container(
-                  height: 60,
-                  padding: const EdgeInsets.symmetric(horizontal: 16.0, vertical: 8.0),
-                  child: _isDrawingMode ? DrawingToolbar(
-                    selectedColor: _selectedColor,
-                    isErasing: _isErasing,
-                    strokeWidth: _strokeWidth,
-                    showColorPalette: _showColorPalette,
-                    showBrushSizes: _showBrushSizes,
-                    onToggleColorPalette: _toggleColorPalette,
-                    onToggleBrushSizes: _toggleBrushSizes,
-                    onToggleEraser: _toggleEraser,
-                    onClearDrawing: _clearDrawing,
-                  ) : Row(
-                    mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-                    children: [
-                      TodoToolbar(
-                        onInsertTodo: () => TodoHelper.insertTodoCircle(_contentController),
-                      ),
-                      AttachmentToolbar(
-                        onShowAttachmentOptions: _showAttachmentOptions,
-                      ),
-                      IconButton(
-                        icon: const Icon(Icons.text_format, color: Colors.black, size: 28),
-                        onPressed: () {
-                          // Show text formatting options
-                          showModalBottomSheet(
-                            context: context,
-                            builder: (context) => Container(
-                              padding: const EdgeInsets.all(16),
-                              child: Column(
-                                mainAxisSize: MainAxisSize.min,
-                                children: [
-                                  const Text(
-                                    'Text Formatting',
-                                    style: TextStyle(
-                                      fontSize: 18,
-                                      fontWeight: FontWeight.bold,
-                                    ),
-                                  ),
-                                  const SizedBox(height: 16),
-                                  TextFormattingToolbar(controller: _contentController),
-                                ],
-                              ),
-                            ),
-                          );
-                        },
-                      ),
-                      IconButton(
-                        icon: const Icon(Icons.edit, color: Colors.black, size: 28),
-                        onPressed: _toggleDrawingMode,
-                      ),
-                    ],
-                  ),
-                ),
-
-                // Color palette
-                if (_isDrawingMode && _showColorPalette)
-                  Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-                    decoration: BoxDecoration(
-                      color: Colors.grey[50],
-                      border: Border(top: BorderSide(color: Colors.grey[200]!)),
-                    ),
-                    child: Column(
-                      children: [
-                        const Text(
-                          'Select Color',
-                          style: TextStyle(fontSize: 14, fontWeight: FontWeight.bold),
-                        ),
-                        const SizedBox(height: 8),
-                        ColorPalette(
-                          colors: _drawingColors,
-                          selectedColor: _selectedColor,
-                          isErasing: _isErasing,
-                          onColorSelected: _selectColor,
-                        ),
-                      ],
-                    ),
-                  ),
-
-                // Brush size selector
-                if (_isDrawingMode && _showBrushSizes)
-                  Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-                    decoration: BoxDecoration(
-                      color: Colors.grey[50],
-                      border: Border(top: BorderSide(color: Colors.grey[200]!)),
-                    ),
-                    child: Column(
-                      children: [
-                        const Text(
-                          'Brush Size',
-                          style: TextStyle(fontSize: 14, fontWeight: FontWeight.bold),
-                        ),
-                        const SizedBox(height: 8),
-                        BrushSizeSelector(
-                          brushSizes: _brushSizes,
-                          selectedSize: _strokeWidth,
-                          onSizeSelected: _selectBrushSize,
-                        ),
-                      ],
-                    ),
-                  ),
-
-                // Bottom handle
-                if (!_isDrawingMode)
-                  SizedBox(
-                    height: 20,
-                    child: Center(
-                      child: Container(
-                        width: 40,
-                        height: 4,
-                        decoration: BoxDecoration(
-                          color: Colors.grey[400],
-                          borderRadius: BorderRadius.circular(2),
-                        ),
-                      ),
-                    ),
-                  ),
-              ],
-            ),
-          ),
-        ],
+  } catch (e) {
+    print('Error showing image picker: $e');
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text('Error opening image picker: $e'),
+        backgroundColor: Colors.red,
       ),
     );
   }
 }
-
-
-
-
+}

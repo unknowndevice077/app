@@ -1,32 +1,27 @@
-/*import 'package:flutter/material.dart';
-
-
-class MyApp extends StatelessWidget {
-  const MyApp({super.key});
-
-  @override
-  Widget build(BuildContext context) {
-    return MaterialApp();
-  }
-}
-*/
-import 'package:app/login/Auth.dart';
+import 'package:app/login/auth.dart'; // ✅ Keep this one (lowercase)
 import 'package:app/homepage/home_page.dart';
 import 'package:app/login/login_screen.dart';
 import 'package:flutter/material.dart';
 import 'package:firebase_core/firebase_core.dart';
-import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:flutter/foundation.dart';
+import 'package:provider/provider.dart';
 import 'firebase_options.dart';
+import 'providers/profile_picture_provider.dart';
+import 'providers/theme_provider.dart';
+
+final GlobalKey<NavigatorState> navigatorKey = GlobalKey<NavigatorState>();
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
-  await Firebase.initializeApp(
-    options: DefaultFirebaseOptions.currentPlatform,
-  );
-  // Enable Firestore offline persistence
-  FirebaseFirestore.instance.settings = const Settings(
-    persistenceEnabled: true,
-  );
+  
+  try {
+    await Firebase.initializeApp(
+      options: DefaultFirebaseOptions.currentPlatform,
+    );
+    print('✅ Firebase initialized successfully');
+  } catch (e) {
+    print('❌ Firebase initialization failed: $e');
+  }
   
   runApp(const MyApp());
 }
@@ -34,23 +29,36 @@ void main() async {
 class MyApp extends StatelessWidget {
   const MyApp({super.key});
 
-  // This widget is the root of your application.
   @override
   Widget build(BuildContext context) {
-    return MaterialApp(
-      debugShowCheckedModeBanner: false,
-      home: Auth(), // This handles the initial auth check
-      // ✅ ADD PROPER ROUTES TABLE
-      routes: {
-        '/login': (context) => LoginScreen(onTap: () {}),
-        '/home': (context) => const HomePage(),
-      },
-      // ✅ ADD onUnknownRoute for error handling
-      onUnknownRoute: (settings) {
-        return MaterialPageRoute(
-          builder: (context) => LoginScreen(onTap: () {}), // Fallback to login
-        );
-      },
+    return MultiProvider(
+      providers: [
+        ChangeNotifierProvider(create: (_) => ProfilePictureProvider()),
+        ChangeNotifierProvider(create: (_) => ThemeProvider()), // ✅ Fixed: Use (_) consistently
+      ],
+      child: Consumer<ThemeProvider>(
+        builder: (context, themeProvider, child) {
+          return MaterialApp(
+            navigatorKey: navigatorKey,
+            title: 'Study App',
+            debugShowCheckedModeBanner: false,
+            theme: themeProvider.lightTheme,
+            darkTheme: themeProvider.darkTheme,
+            themeMode: themeProvider.themeMode,
+            home: const Auth(),
+            routes: {
+              '/login': (context) => LoginScreen(onTap: () {}),
+              '/home': (context) => const HomePage(),
+            },
+            onUnknownRoute: (settings) {
+              if (kDebugMode) print('🔄 Unknown route: ${settings.name}');
+              return MaterialPageRoute(
+                builder: (context) => LoginScreen(onTap: () {}),
+              );
+            },
+          );
+        },
+      ),
     );
   }
 }

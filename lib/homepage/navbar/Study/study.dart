@@ -1,11 +1,12 @@
-import 'package:app/homepage/navbar/Study/timer.dart';
 import 'package:app/homepage/navbar/Study/quiz/quiz.dart';
 import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:flutter/cupertino.dart';
+import 'package:firebase_auth/firebase_auth.dart';
 import 'dart:async';
-
+import 'classtimer.dart';
+import 'topic.dart';
 
 class Study extends StatefulWidget {
   const Study({super.key});
@@ -37,34 +38,175 @@ class _StudyState extends State<Study> with TickerProviderStateMixin {
     super.dispose();
   }
 
-  // Calculate total study time for a class
-  Future<int> _getTotalStudyTime(String classId) async {
+  // Calculate total study time from ClassTimerSessions and count only topics
+  Future<Map<String, dynamic>> _getClassStats(String classId) async {
     try {
-      final snapshot =
-          await FirebaseFirestore.instance
-              .collection('Classes')
-              .doc(classId)
-              .collection('studySessions')
-              .get();
+      final user = FirebaseAuth.instance.currentUser;
+      if (user == null) return {'studyTime': 0, 'topicCount': 0};
 
-      int totalMinutes = 0;
-      for (var doc in snapshot.docs) {
+      // Get study time from ClassTimerSessions
+      final studySnapshot = await FirebaseFirestore.instance
+          .collection('users')
+          .doc(user.uid)
+          .collection('Classes')
+          .doc(classId)
+          .collection('ClassTimerSessions')
+          .get();
+
+      int totalSeconds = 0;
+      for (var doc in studySnapshot.docs) {
         final data = doc.data();
-        totalMinutes += (data['minutes'] ?? 0) as int;
+        totalSeconds += (data['duration'] ?? 0) as int;
       }
-      return totalMinutes;
+
+      // Get topic count - ONLY count documents that have 'createdAt' field (real topics)
+      // Files have 'addedAt', topics have 'createdAt'
+      final topicSnapshot = await FirebaseFirestore.instance
+          .collection('users')
+          .doc(user.uid)
+          .collection('Classes')
+          .doc(classId)
+          .collection('topics')
+          .where('createdAt', isNotEqualTo: null) // Only get documents with createdAt field
+          .get();
+
+      // Additional filtering to make sure we only count actual topics
+      int actualTopicCount = 0;
+      for (var doc in topicSnapshot.docs) {
+        final data = doc.data();
+        // Only count if it has a title field (which topics have, files don't)
+        if (data.containsKey('title') && data['title'] != null) {
+          actualTopicCount++;
+        }
+      }
+
+      // Debug: Print what we're counting
+      print('=== DEBUG: Topics for class $classId ===');
+      print('Raw query result count: ${topicSnapshot.docs.length}');
+      print('Actual topic count: $actualTopicCount');
+      for (var doc in topicSnapshot.docs) {
+        final data = doc.data();
+        print('Doc ID: ${doc.id}');
+        print('Has title: ${data.containsKey('title')}');
+        print('Title: ${data['title']}');
+        print('Has createdAt: ${data.containsKey('createdAt')}');
+        print('Has addedAt: ${data.containsKey('addedAt')}');
+        print('All fields: ${data.keys.toList()}');
+        print('---');
+      }
+      print('=== END DEBUG ===');
+
+      return {
+        'studyTime': totalSeconds,
+        'topicCount': actualTopicCount, // Use the filtered count
+      };
     } catch (e) {
-      print('Error calculating study time: $e');
-      return 0;
+      print('Error calculating class stats: $e');
+      return {'studyTime': 0, 'topicCount': 0};
     }
   }
 
-  // Format minutes into hours and minutes
-  String _formatStudyTime(int totalMinutes) {
-    if (totalMinutes == 0) return '0m';
+  // Delete topic
+  Future<void> _deleteTopic(String classId, String topicId, String topicTitle) async {
+    try {
+      final confirmed = await showDialog<bool>(
+        context: context,
+        builder: (context) => AlertDialog(
+          title: Text('Delete Topic'),
+          content: Text('Are you sure you want to delete "$topicTitle"?\n\nThis will also delete all files in this topic.'),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context, false),
+              child: Text('Cancel'),
+            ),
+            TextButton(
+              onPressed: () => Navigator.pop(context, true),
+              style: TextButton.styleFrom(foregroundColor: Colors.red),
+              child: Text('Delete'),
+            ),
+          ],
+        ),
+      );
 
-    final hours = totalMinutes ~/ 60;
-    final minutes = totalMinutes % 60;
+      if (confirmed == true) {
+        final user = FirebaseAuth.instance.currentUser;
+        if (user == null) return;
+
+        // Delete all files in this topic first
+        final filesSnapshot = await FirebaseFirestore.instance
+            .collection('users')
+            .doc(user.uid)
+            .collection('Classes')
+            .doc(classId)
+            .collection('topics')
+            .doc(topicId)
+            .collection('files')
+            .get();
+
+        // Delete all file documents
+        final batch = FirebaseFirestore.instance.batch();
+        for (var doc in filesSnapshot.docs) {
+          batch.delete(doc.reference);
+        }
+
+        // Delete the topic document
+        batch.delete(
+          FirebaseFirestore.instance
+              .collection('users')
+              .doc(user.uid)
+              .collection('Classes')
+              .doc(classId)
+              .collection('topics')
+              .doc(topicId),
+        );
+
+        await batch.commit();
+
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Row(
+                children: [
+                  Icon(Icons.check_circle, color: Colors.white, size: 20),
+                  SizedBox(width: 12),
+                  Text('Topic deleted successfully'),
+                ],
+              ),
+              backgroundColor: Colors.green,
+              behavior: SnackBarBehavior.floating,
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+              margin: EdgeInsets.all(16),
+            ),
+          );
+        }
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Row(
+              children: [
+                Icon(Icons.error, color: Colors.white, size: 20),
+                SizedBox(width: 12),
+                Text('Error deleting topic'),
+              ],
+            ),
+            backgroundColor: Colors.red,
+            behavior: SnackBarBehavior.floating,
+            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+            margin: EdgeInsets.all(16),
+          ),
+        );
+      }
+    }
+  }
+
+  // Format seconds into readable time
+  String _formatStudyTime(int totalSeconds) {
+    if (totalSeconds == 0) return '0m';
+
+    final hours = totalSeconds ~/ 3600;
+    final minutes = (totalSeconds % 3600) ~/ 60;
 
     if (hours == 0) {
       return '${minutes}m';
@@ -79,32 +221,19 @@ class _StudyState extends State<Study> with TickerProviderStateMixin {
   Widget build(BuildContext context) {
     final screenSize = MediaQuery.of(context).size;
     final screenWidth = screenSize.width;
-    final screenHeight = screenSize.height;
     final isTablet = screenWidth > 600;
     final isLargeScreen = screenWidth > 900;
     final isSmallScreen = screenWidth < 400;
 
     // Responsive values
-    final horizontalPadding =
-        isLargeScreen
-            ? 40.0
-            : isTablet
-            ? 24.0
-            : 16.0;
+    final horizontalPadding = isLargeScreen ? 40.0 : isTablet ? 24.0 : 16.0;
     final verticalPadding = isTablet ? 20.0 : 16.0;
-    final titleFontSize =
-        isLargeScreen
-            ? 40.0
-            : isTablet
-            ? 36.0
-            : isSmallScreen
-            ? 28.0
-            : 32.0;
+    final titleFontSize = isLargeScreen ? 40.0 : isTablet ? 36.0 : isSmallScreen ? 28.0 : 32.0;
     final cardPadding = isTablet ? 32.0 : 24.0;
     final cardRadius = isTablet ? 28.0 : 24.0;
 
     return Scaffold(
-      backgroundColor: Colors.grey[50],
+      backgroundColor: const Color(0xFFF8FAFC),
       body: FadeTransition(
         opacity: _fadeAnimation,
         child: CustomScrollView(
@@ -120,9 +249,9 @@ class _StudyState extends State<Study> with TickerProviderStateMixin {
                 centerTitle: true,
                 title: Text(
                   'Study Hub',
-                  style: GoogleFonts.dmSerifText(
-                    fontSize: titleFontSize * 0.7, // Smaller for app bar
-                    fontWeight: FontWeight.bold,
+                  style: GoogleFonts.inter(
+                    fontSize: titleFontSize * 0.6,
+                    fontWeight: FontWeight.w800,
                     color: Colors.black87,
                   ),
                 ),
@@ -153,9 +282,9 @@ class _StudyState extends State<Study> with TickerProviderStateMixin {
                       borderRadius: BorderRadius.circular(cardRadius),
                       boxShadow: [
                         BoxShadow(
-                          color: Colors.black.withOpacity(0.08),
+                          color: Colors.black.withOpacity(0.04),
                           blurRadius: 20,
-                          offset: const Offset(0, 8),
+                          offset: const Offset(0, 4),
                         ),
                       ],
                     ),
@@ -192,10 +321,7 @@ class _StudyState extends State<Study> with TickerProviderStateMixin {
                                       subtitle: 'Test Knowledge',
                                       icon: Icons.quiz_outlined,
                                       gradient: const LinearGradient(
-                                        colors: [
-                                          Color(0xFF3B82F6),
-                                          Color(0xFF1D4ED8),
-                                        ],
+                                        colors: [Color(0xFF3B82F6), Color(0xFF1D4ED8)],
                                       ),
                                       screenSize: screenSize,
                                       onTap: () => _navigateToQuiz(context),
@@ -208,10 +334,7 @@ class _StudyState extends State<Study> with TickerProviderStateMixin {
                                       subtitle: 'Focus Session',
                                       icon: Icons.access_time_outlined,
                                       gradient: const LinearGradient(
-                                        colors: [
-                                          Color(0xFF10B981),
-                                          Color(0xFF059669),
-                                        ],
+                                        colors: [Color(0xFF10B981), Color(0xFF059669)],
                                       ),
                                       screenSize: screenSize,
                                       onTap: () => _navigateToTimer(context),
@@ -228,10 +351,7 @@ class _StudyState extends State<Study> with TickerProviderStateMixin {
                                     subtitle: 'Test Knowledge',
                                     icon: Icons.quiz_outlined,
                                     gradient: const LinearGradient(
-                                      colors: [
-                                        Color(0xFF3B82F6),
-                                        Color(0xFF1D4ED8),
-                                      ],
+                                      colors: [Color(0xFF3B82F6), Color(0xFF1D4ED8)],
                                     ),
                                     screenSize: screenSize,
                                     onTap: () => _navigateToQuiz(context),
@@ -242,10 +362,7 @@ class _StudyState extends State<Study> with TickerProviderStateMixin {
                                     subtitle: 'Focus Session',
                                     icon: Icons.access_time_outlined,
                                     gradient: const LinearGradient(
-                                      colors: [
-                                        Color(0xFF10B981),
-                                        Color(0xFF059669),
-                                      ],
+                                      colors: [Color(0xFF10B981), Color(0xFF059669)],
                                     ),
                                     screenSize: screenSize,
                                     onTap: () => _navigateToTimer(context),
@@ -286,25 +403,33 @@ class _StudyState extends State<Study> with TickerProviderStateMixin {
                           ),
                         ],
                       ),
-                      Container(
-                        padding: EdgeInsets.symmetric(
-                          horizontal: isTablet ? 16.0 : 12.0,
-                          vertical: isTablet ? 8.0 : 6.0,
-                        ),
-                        decoration: BoxDecoration(
-                          color: const Color(
-                            0xFF3B82F6,
-                          ).withAlpha((0.1 * 255).toInt()),
-                          borderRadius: BorderRadius.circular(12),
-                        ),
-                        child: Text(
-                          'All Subjects',
-                          style: GoogleFonts.inter(
-                            fontSize: isTablet ? 14.0 : 12.0,
-                            fontWeight: FontWeight.w600,
-                            color: const Color(0xFF3B82F6),
-                          ),
-                        ),
+                      StreamBuilder<QuerySnapshot>(
+                        stream: FirebaseFirestore.instance
+                            .collection('users')
+                            .doc(FirebaseAuth.instance.currentUser?.uid)
+                            .collection('Classes')
+                            .snapshots(),
+                        builder: (context, snapshot) {
+                          final count = snapshot.hasData ? snapshot.data!.docs.length : 0;
+                          return Container(
+                            padding: EdgeInsets.symmetric(
+                              horizontal: isTablet ? 16.0 : 12.0,
+                              vertical: isTablet ? 8.0 : 6.0,
+                            ),
+                            decoration: BoxDecoration(
+                              color: const Color(0xFF3B82F6).withOpacity(0.1),
+                              borderRadius: BorderRadius.circular(20),
+                            ),
+                            child: Text(
+                              '$count Classes',
+                              style: GoogleFonts.inter(
+                                fontSize: isTablet ? 14.0 : 12.0,
+                                fontWeight: FontWeight.w600,
+                                color: const Color(0xFF3B82F6),
+                              ),
+                            ),
+                          );
+                        },
                       ),
                     ],
                   ),
@@ -314,18 +439,55 @@ class _StudyState extends State<Study> with TickerProviderStateMixin {
               ),
             ),
 
-            // Classes List
+            // Classes List with enhanced stats
             StreamBuilder<QuerySnapshot>(
-              stream:
-                  FirebaseFirestore.instance.collection('Classes').snapshots(),
+              stream: FirebaseFirestore.instance
+                  .collection('users')
+                  .doc(FirebaseAuth.instance.currentUser?.uid)
+                  .collection('Classes')
+                  .snapshots(),
               builder: (context, snapshot) {
                 if (snapshot.connectionState == ConnectionState.waiting) {
                   return const SliverFillRemaining(
                     child: Center(
                       child: CircularProgressIndicator(
                         strokeWidth: 3,
-                        valueColor: AlwaysStoppedAnimation<Color>(
-                          Color(0xFF3B82F6),
+                        valueColor: AlwaysStoppedAnimation<Color>(Color(0xFF3B82F6)),
+                      ),
+                    ),
+                  );
+                }
+
+                if (snapshot.hasError) {
+                  return SliverFillRemaining(
+                    child: SingleChildScrollView(
+                      child: SizedBox(
+                        height: MediaQuery.of(context).size.height * 0.6,
+                        child: Center(
+                          child: Column(
+                            mainAxisAlignment: MainAxisAlignment.center,
+                            children: [
+                              Icon(Icons.error_outline, size: 64, color: Colors.red),
+                              SizedBox(height: 16),
+                              Text(
+                                'Error loading classes',
+                                style: GoogleFonts.inter(
+                                  fontSize: 18,
+                                  fontWeight: FontWeight.w600,
+                                  color: Colors.red,
+                                ),
+                              ),
+                              SizedBox(height: 8),
+                              Padding(
+                                padding: const EdgeInsets.symmetric(horizontal: 32),
+                                child: Text(
+                                  'Please check your connection and try again',
+                                  style: GoogleFonts.inter(color: Colors.grey[600]),
+                                  textAlign: TextAlign.center,
+                                ),
+                              ),
+                            ],
+                          ),
                         ),
                       ),
                     ),
@@ -341,24 +503,34 @@ class _StudyState extends State<Study> with TickerProviderStateMixin {
                 return SliverPadding(
                   padding: EdgeInsets.symmetric(horizontal: horizontalPadding),
                   sliver: SliverList(
-                    delegate: SliverChildBuilderDelegate((context, index) {
-                      final doc = snapshot.data!.docs[index];
-                      final data = doc.data() as Map<String, dynamic>;
-                      final Color cardColor =
-                          data['color'] != null
-                              ? Color(data['color'])
-                              : const Color(0xFF3B82F6);
-                      final docId = doc.id;
+                    delegate: SliverChildBuilderDelegate(
+                      (context, index) {
+                        final doc = snapshot.data!.docs[index];
+                        final data = doc.data() as Map<String, dynamic>;
+                        final Color cardColor = data['color'] != null
+                            ? Color(data['color'])
+                            : const Color(0xFF3B82F6);
+                        final docId = doc.id;
 
-                      return _ResponsiveClassCard(
-                        data: data,
-                        cardColor: cardColor,
-                        docId: docId,
-                        index: index,
-                        screenSize: screenSize,
-                      );
-                    }, childCount: snapshot.data!.docs.length),
-                  ),
+                        return FutureBuilder<Map<String, dynamic>>(
+                          future: _getClassStats(docId),
+                          builder: (context, statsSnapshot) {
+                            final stats = statsSnapshot.data ?? {'studyTime': 0, 'topicCount': 0};
+                            return _ModernClassCard(
+                              data: data,
+                              cardColor: cardColor,
+                              docId: docId,
+                              index: index,
+                              screenSize: screenSize,
+                              studyTime: stats['studyTime'],
+                              topicCount: stats['topicCount'],
+                            );
+                          },
+                        );
+                      },
+                      childCount: snapshot.data!.docs.length,
+                    ),
+                  )
                 );
               },
             ),
@@ -377,8 +549,7 @@ class _StudyState extends State<Study> with TickerProviderStateMixin {
     Navigator.push(
       context,
       PageRouteBuilder(
-        pageBuilder:
-            (context, animation, secondaryAnimation) => const StudyQuizScreen(),
+        pageBuilder: (context, animation, secondaryAnimation) => const StudyQuizScreen(),
         transitionsBuilder: (context, animation, secondaryAnimation, child) {
           return SlideTransition(
             position: animation.drive(
@@ -395,8 +566,11 @@ class _StudyState extends State<Study> with TickerProviderStateMixin {
     Navigator.push(
       context,
       PageRouteBuilder(
-        pageBuilder:
-            (context, animation, secondaryAnimation) => const StudyTimerPage(),
+        pageBuilder: (context, animation, secondaryAnimation) => ClassTimer(
+          classId: '', // TODO: Provide appropriate classId
+          topicId: '', // TODO: Provide appropriate topicId
+          topicTitle: '', // TODO: Provide appropriate topicTitle
+        ),
         transitionsBuilder: (context, animation, secondaryAnimation, child) {
           return SlideTransition(
             position: animation.drive(
@@ -406,6 +580,328 @@ class _StudyState extends State<Study> with TickerProviderStateMixin {
           );
         },
       ),
+    );
+  }
+}
+
+// New Modern Class Card Design
+class _ModernClassCard extends StatelessWidget {
+  final Map<String, dynamic> data;
+  final Color cardColor;
+  final String docId;
+  final int index;
+  final Size screenSize;
+  final int studyTime;
+  final int topicCount;
+
+  const _ModernClassCard({
+    required this.data,
+    required this.cardColor,
+    required this.docId,
+    required this.index,
+    required this.screenSize,
+    required this.studyTime,
+    required this.topicCount,
+  });
+
+  String _formatStudyTime(int totalSeconds) {
+    if (totalSeconds == 0) return '0m';
+    final hours = totalSeconds ~/ 3600;
+    final minutes = (totalSeconds % 3600) ~/ 60;
+    if (hours == 0) return '${minutes}m';
+    if (minutes == 0) return '${hours}h';
+    return '${hours}h ${minutes}m';
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final isTablet = screenSize.width > 600;
+    final marginBottom = isTablet ? 20.0 : 16.0;
+
+    return Container(
+      margin: EdgeInsets.only(bottom: marginBottom),
+      child: GestureDetector(
+        onTap: () => Navigator.push(
+          context,
+          PageRouteBuilder(
+            pageBuilder: (context, animation, secondaryAnimation) =>
+                TopicScreen(
+              classId: docId,
+              classData: data,
+              classColor: cardColor,
+              classTitle: data['title'] ?? 'Class',
+            ),
+            transitionsBuilder: (context, animation, secondaryAnimation, child) {
+              return SlideTransition(
+                position: animation.drive(
+                  Tween(begin: const Offset(1.0, 0.0), end: Offset.zero).chain(
+                    CurveTween(curve: Curves.easeOutCubic),
+                  ),
+                ),
+                child: child,
+              );
+            },
+            transitionDuration: const Duration(milliseconds: 400),
+          ),
+        ),
+        child: Container(
+          decoration: BoxDecoration(
+            color: Colors.white,
+            borderRadius: BorderRadius.circular(isTablet ? 24 : 20),
+            border: Border.all(color: Colors.grey[100]!),
+            boxShadow: [
+              BoxShadow(
+                color: Colors.black.withOpacity(0.04),
+                blurRadius: 20,
+                offset: const Offset(0, 4),
+              ),
+            ],
+          ),
+          child: Column(
+            children: [
+              // Header with gradient accent
+              Container(
+                padding: EdgeInsets.all(isTablet ? 24 : 20),
+                decoration: BoxDecoration(
+                  gradient: LinearGradient(
+                    colors: [
+                      cardColor.withOpacity(0.1),
+                      cardColor.withOpacity(0.05),
+                    ],
+                    begin: Alignment.topLeft,
+                    end: Alignment.bottomRight,
+                  ),
+                  borderRadius: BorderRadius.only(
+                    topLeft: Radius.circular(isTablet ? 24 : 20),
+                    topRight: Radius.circular(isTablet ? 24 : 20),
+                  ),
+                ),
+                child: Row(
+                  children: [
+                    Container(
+                      width: isTablet ? 64 : 56,
+                      height: isTablet ? 64 : 56,
+                      decoration: BoxDecoration(
+                        color: cardColor,
+                        borderRadius: BorderRadius.circular(16),
+                        boxShadow: [
+                          BoxShadow(
+                            color: cardColor.withOpacity(0.3),
+                            blurRadius: 12,
+                            offset: const Offset(0, 4),
+                          ),
+                        ],
+                      ),
+                      child: Icon(
+                        Icons.school_outlined,
+                        color: Colors.white,
+                        size: isTablet ? 32 : 28,
+                      ),
+                    ),
+                    SizedBox(width: isTablet ? 20 : 16),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            data['title'] ?? 'No Title',
+                            style: GoogleFonts.inter(
+                              fontSize: isTablet ? 22 : 18,
+                              fontWeight: FontWeight.w700,
+                              color: Colors.black87,
+                              height: 1.2,
+                            ),
+                            maxLines: 2,
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                          SizedBox(height: isTablet ? 8 : 6),
+                          Text(
+                            data['teacher'] ?? 'No teacher assigned',
+                            style: GoogleFonts.inter(
+                              fontSize: isTablet ? 16 : 14,
+                              fontWeight: FontWeight.w500,
+                              color: Colors.grey[600],
+                            ),
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                        ],
+                      ),
+                    ),
+                    Icon(
+                      Icons.chevron_right,
+                      color: Colors.grey[400],
+                      size: isTablet ? 24 : 20,
+                    ),
+                  ],
+                ),
+              ),
+
+              // Stats Section
+              Container(
+                padding: EdgeInsets.all(isTablet ? 24 : 20),
+                child: Column(
+                  children: [
+                    // Study Time and Topics Row
+                    Row(
+                      children: [
+                        Expanded(
+                          child: _StatItem(
+                            icon: Icons.access_time_outlined,
+                            label: 'Study Time',
+                            value: _formatStudyTime(studyTime),
+                            color: Colors.blue,
+                            isTablet: isTablet,
+                          ),
+                        ),
+                        SizedBox(width: isTablet ? 20 : 16),
+                        Expanded(
+                          child: _StatItem(
+                            icon: Icons.topic_outlined,
+                            label: 'Topics',
+                            value: topicCount.toString(),
+                            color: Colors.green,
+                            isTablet: isTablet,
+                          ),
+                        ),
+                      ],
+                    ),
+
+                    SizedBox(height: isTablet ? 20 : 16),
+
+                    // Class Details
+                    Container(
+                      padding: EdgeInsets.all(isTablet ? 20 : 16),
+                      decoration: BoxDecoration(
+                        color: Colors.grey[50],
+                        borderRadius: BorderRadius.circular(16),
+                      ),
+                      child: Column(
+                        children: [
+                          _DetailRow(
+                            icon: CupertinoIcons.time,
+                            text: data['time'] ?? 'No time set',
+                            isTablet: isTablet,
+                          ),
+                          if (data['location'] != null && data['location'].toString().isNotEmpty) ...[
+                            SizedBox(height: isTablet ? 12 : 8),
+                            _DetailRow(
+                              icon: CupertinoIcons.location,
+                              text: data['location'],
+                              isTablet: isTablet,
+                            ),
+                          ],
+                        ],
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+// Stat Item Widget
+class _StatItem extends StatelessWidget {
+  final IconData icon;
+  final String label;
+  final String value;
+  final Color color;
+  final bool isTablet;
+
+  const _StatItem({
+    required this.icon,
+    required this.label,
+    required this.value,
+    required this.color,
+    required this.isTablet,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: EdgeInsets.all(isTablet ? 20 : 16),
+      decoration: BoxDecoration(
+        color: color.withOpacity(0.1),
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: color.withOpacity(0.2)),
+      ),
+      child: Column(
+        children: [
+          Icon(
+            icon,
+            color: color,
+            size: isTablet ? 28 : 24,
+          ),
+          SizedBox(height: isTablet ? 12 : 8),
+          Text(
+            value,
+            style: GoogleFonts.inter(
+              fontSize: isTablet ? 20 : 18,
+              fontWeight: FontWeight.w700,
+              color: color,
+            ),
+          ),
+          SizedBox(height: isTablet ? 4 : 2),
+          Text(
+            label,
+            style: GoogleFonts.inter(
+              fontSize: isTablet ? 14 : 12,
+              fontWeight: FontWeight.w500,
+              color: Colors.grey[600],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+// Detail Row Widget
+class _DetailRow extends StatelessWidget {
+  final IconData icon;
+  final String text;
+  final bool isTablet;
+
+  const _DetailRow({
+    required this.icon,
+    required this.text,
+    required this.isTablet,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Row(
+      children: [
+        Container(
+          padding: EdgeInsets.all(isTablet ? 10 : 8),
+          decoration: BoxDecoration(
+            color: Colors.white,
+            borderRadius: BorderRadius.circular(8),
+          ),
+          child: Icon(
+            icon,
+            size: isTablet ? 18 : 16,
+            color: Colors.grey[600],
+          ),
+        ),
+        SizedBox(width: isTablet ? 16 : 12),
+        Expanded(
+          child: Text(
+            text,
+            style: GoogleFonts.inter(
+              fontSize: isTablet ? 16 : 14,
+              fontWeight: FontWeight.w500,
+              color: Colors.grey[700],
+            ),
+            overflow: TextOverflow.ellipsis,
+          ),
+        ),
+      ],
     );
   }
 }
@@ -461,50 +957,12 @@ class _ResponsiveFeatureCardState extends State<_ResponsiveFeatureCard>
     final isLargeScreen = widget.screenSize.width > 900;
     final isSmallScreen = widget.screenSize.width < 400;
 
-    // Responsive sizing - increased heights to prevent overflow
-    final cardHeight =
-        isLargeScreen
-            ? 160.0
-            : isTablet
-            ? 150.0
-            : isSmallScreen
-            ? 130.0
-            : 140.0;
-
-    final iconSize =
-        isLargeScreen
-            ? 32.0
-            : isTablet
-            ? 28.0
-            : 24.0;
-
-    final titleFontSize =
-        isLargeScreen
-            ? 20.0
-            : isTablet
-            ? 18.0
-            : 16.0;
-
-    final subtitleFontSize =
-        isLargeScreen
-            ? 15.0
-            : isTablet
-            ? 14.0
-            : 12.0;
-
-    final padding =
-        isLargeScreen
-            ? 28.0
-            : isTablet
-            ? 24.0
-            : 20.0;
-
-    final iconContainerSize =
-        isLargeScreen
-            ? 56.0
-            : isTablet
-            ? 52.0
-            : 48.0;
+    final cardHeight = isLargeScreen ? 160.0 : isTablet ? 150.0 : isSmallScreen ? 130.0 : 140.0;
+    final iconSize = isLargeScreen ? 32.0 : isTablet ? 28.0 : 24.0;
+    final titleFontSize = isLargeScreen ? 20.0 : isTablet ? 18.0 : 16.0;
+    final subtitleFontSize = isLargeScreen ? 15.0 : isTablet ? 14.0 : 12.0;
+    final padding = isLargeScreen ? 28.0 : isTablet ? 24.0 : 20.0;
+    final iconContainerSize = isLargeScreen ? 56.0 : isTablet ? 52.0 : 48.0;
 
     return GestureDetector(
       onTapDown: (_) => _controller.forward(),
@@ -519,7 +977,7 @@ class _ResponsiveFeatureCardState extends State<_ResponsiveFeatureCard>
           width: double.infinity,
           constraints: BoxConstraints(
             minHeight: cardHeight,
-            maxHeight: cardHeight + 20, // Allow some flexibility
+            maxHeight: cardHeight + 20,
           ),
           decoration: BoxDecoration(
             gradient: widget.gradient,
@@ -534,23 +992,13 @@ class _ResponsiveFeatureCardState extends State<_ResponsiveFeatureCard>
           ),
           child: Stack(
             children: [
-              // Background pattern - adjusted sizes
+              // Background pattern
               Positioned(
                 top: -15,
                 right: -15,
                 child: Container(
-                  width:
-                      isLargeScreen
-                          ? 90
-                          : isTablet
-                          ? 80
-                          : 70,
-                  height:
-                      isLargeScreen
-                          ? 90
-                          : isTablet
-                          ? 80
-                          : 70,
+                  width: isLargeScreen ? 90 : isTablet ? 80 : 70,
+                  height: isLargeScreen ? 90 : isTablet ? 80 : 70,
                   decoration: BoxDecoration(
                     color: Colors.white.withOpacity(0.1),
                     shape: BoxShape.circle,
@@ -561,32 +1009,21 @@ class _ResponsiveFeatureCardState extends State<_ResponsiveFeatureCard>
                 bottom: -10,
                 left: -10,
                 child: Container(
-                  width:
-                      isLargeScreen
-                          ? 50
-                          : isTablet
-                          ? 45
-                          : 40,
-                  height:
-                      isLargeScreen
-                          ? 50
-                          : isTablet
-                          ? 45
-                          : 40,
+                  width: isLargeScreen ? 50 : isTablet ? 45 : 40,
+                  height: isLargeScreen ? 50 : isTablet ? 45 : 40,
                   decoration: BoxDecoration(
                     color: Colors.white.withOpacity(0.08),
                     shape: BoxShape.circle,
                   ),
                 ),
               ),
-              // Content with improved layout
+              // Content
               Padding(
                 padding: EdgeInsets.all(padding),
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   mainAxisAlignment: MainAxisAlignment.spaceBetween,
                   children: [
-                    // Icon container with fixed size
                     Container(
                       width: iconContainerSize,
                       height: iconContainerSize,
@@ -602,7 +1039,6 @@ class _ResponsiveFeatureCardState extends State<_ResponsiveFeatureCard>
                         ),
                       ),
                     ),
-                    // Text content with flexible sizing
                     Flexible(
                       child: Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
@@ -640,278 +1076,10 @@ class _ResponsiveFeatureCardState extends State<_ResponsiveFeatureCard>
             ],
           ),
         ),
-      ),
-    );
+      ));
+    }
   }
-}
 
-class _ResponsiveClassCard extends StatelessWidget {
-  final Map<String, dynamic> data;
-  final Color cardColor;
-  final String docId;
-  final int index;
-  final Size screenSize;
-
-  const _ResponsiveClassCard({
-    required this.data,
-    required this.cardColor,
-    required this.docId,
-    required this.index,
-    required this.screenSize,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    final isTablet = screenSize.width > 600;
-    final isLight =
-        ThemeData.estimateBrightnessForColor(cardColor) == Brightness.light;
-
-    final cardPadding = isTablet ? 32.0 : 24.0;
-    final titleFontSize = isTablet ? 26.0 : 22.0;
-    final detailFontSize = isTablet ? 16.0 : 14.0;
-    final iconSize = isTablet ? 22.0 : 18.0;
-    final marginBottom = isTablet ? 24.0 : 20.0;
-
-    return Container(
-      margin: EdgeInsets.only(bottom: marginBottom),
-      child: GestureDetector(
-        onTap:
-            () => Navigator.push(
-              context,
-              PageRouteBuilder(
-                pageBuilder:
-                    (context, animation, secondaryAnimation) =>
-                        ResponsiveClassDetailScreen(
-                          data: data,
-                          cardColor: cardColor,
-                          docId: docId,
-                          screenSize: screenSize,
-                        ),
-                transitionsBuilder: (
-                  context,
-                  animation,
-                  secondaryAnimation,
-                  child,
-                ) {
-                  return SlideTransition(
-                    position: animation.drive(
-                      Tween(begin: const Offset(1.0, 0.0), end: Offset.zero),
-                    ),
-                    child: child,
-                  );
-                },
-              ),
-            ),
-        child: Container(
-          decoration: BoxDecoration(
-            color: cardColor,
-            borderRadius: BorderRadius.circular(isTablet ? 28 : 24),
-            boxShadow: [
-              BoxShadow(
-                color: cardColor.withOpacity(0.3),
-                blurRadius: 20,
-                offset: const Offset(0, 8),
-              ),
-            ],
-          ),
-          child: Stack(
-            children: [
-              // Background pattern
-              Positioned(
-                top: -30,
-                right: -30,
-                child: Container(
-                  width: isTablet ? 140 : 120,
-                  height: isTablet ? 140 : 120,
-                  decoration: BoxDecoration(
-                    color: (isLight ? Colors.black : Colors.white).withOpacity(
-                      0.05,
-                    ),
-                    shape: BoxShape.circle,
-                  ),
-                ),
-              ),
-              // Content
-              Padding(
-                padding: EdgeInsets.all(cardPadding),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    // Header
-                    Row(
-                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                      children: [
-                        Expanded(
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              Text(
-                                data['title'] ?? 'No Title',
-                                style: GoogleFonts.inter(
-                                  fontSize: titleFontSize,
-                                  fontWeight: FontWeight.w700,
-                                  color: isLight ? Colors.black : Colors.white,
-                                  height: 1.2,
-                                ),
-                                maxLines: 2,
-                                overflow: TextOverflow.ellipsis,
-                              ),
-                              SizedBox(height: isTablet ? 12 : 8),
-                              Container(
-                                padding: EdgeInsets.symmetric(
-                                  horizontal: isTablet ? 16 : 12,
-                                  vertical: isTablet ? 6 : 4,
-                                ),
-                                decoration: BoxDecoration(
-                                  color: (isLight ? Colors.black : Colors.white)
-                                      .withOpacity(0.1),
-                                  borderRadius: BorderRadius.circular(12),
-                                ),
-                                child: Text(
-                                  'Active',
-                                  style: GoogleFonts.inter(
-                                    fontSize: isTablet ? 14 : 12,
-                                    fontWeight: FontWeight.w600,
-                                    color: (isLight
-                                            ? Colors.black
-                                            : Colors.white)
-                                        .withOpacity(0.7),
-                                  ),
-                                ),
-                              ),
-                            ],
-                          ),
-                        ),
-                        Container(
-                          padding: EdgeInsets.all(isTablet ? 16 : 12),
-                          decoration: BoxDecoration(
-                            color: (isLight ? Colors.black : Colors.white)
-                                .withOpacity(0.1),
-                            borderRadius: BorderRadius.circular(16),
-                          ),
-                          child: Icon(
-                            Icons.school_outlined,
-                            color: (isLight ? Colors.black : Colors.white)
-                                .withOpacity(0.7),
-                            size: isTablet ? 28 : 24,
-                          ),
-                        ),
-                      ],
-                    ),
-
-                    SizedBox(height: isTablet ? 28 : 24),
-
-                    // Class details
-                    _ResponsiveDetailRow(
-                      icon: CupertinoIcons.time,
-                      text: data['time'] ?? 'No time set',
-                      isLight: isLight,
-                      screenSize: screenSize,
-                    ),
-                    SizedBox(height: isTablet ? 16 : 12),
-                    _ResponsiveDetailRow(
-                      icon: CupertinoIcons.person,
-                      text: data['teacher'] ?? 'No teacher assigned',
-                      isLight: isLight,
-                      screenSize: screenSize,
-                      isBold: true,
-                    ),
-                    SizedBox(height: isTablet ? 16 : 12),
-                    _ResponsiveDetailRow(
-                      icon: CupertinoIcons.location,
-                      text: data['location'] ?? 'No location set',
-                      isLight: isLight,
-                      screenSize: screenSize,
-                    ),
-
-                    SizedBox(height: isTablet ? 24 : 20),
-
-                    // Action arrow
-                    Row(
-                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                      children: [
-                        Text(
-                          'Tap to explore',
-                          style: GoogleFonts.inter(
-                            fontSize: isTablet ? 14 : 12,
-                            fontWeight: FontWeight.w500,
-                            color: (isLight ? Colors.black : Colors.white)
-                                .withOpacity(0.6),
-                          ),
-                        ),
-                        Icon(
-                          Icons.arrow_forward_ios_rounded,
-                          color: (isLight ? Colors.black : Colors.white)
-                              .withOpacity(0.6),
-                          size: isTablet ? 18 : 16,
-                        ),
-                      ],
-                    ),
-                  ],
-                ),
-              ),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
-}
-
-class _ResponsiveDetailRow extends StatelessWidget {
-  final IconData icon;
-  final String text;
-  final bool isLight;
-  final Size screenSize;
-  final bool isBold;
-
-  const _ResponsiveDetailRow({
-    required this.icon,
-    required this.text,
-    required this.isLight,
-    required this.screenSize,
-    this.isBold = false,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    final isTablet = screenSize.width > 600;
-    final iconSize = isTablet ? 20.0 : 16.0;
-    final fontSize = isTablet ? 16.0 : 14.0;
-    final iconPadding = isTablet ? 10.0 : 6.0;
-
-    return Row(
-      children: [
-        Container(
-          padding: EdgeInsets.all(iconPadding),
-          decoration: BoxDecoration(
-            color: (isLight ? Colors.black : Colors.white).withOpacity(0.1),
-            borderRadius: BorderRadius.circular(8),
-          ),
-          child: Icon(
-            icon,
-            size: iconSize,
-            color: (isLight ? Colors.black : Colors.white).withOpacity(0.7),
-          ),
-        ),
-        SizedBox(width: isTablet ? 16 : 12),
-        Expanded(
-          child: Text(
-            text,
-            style: GoogleFonts.inter(
-              fontSize: fontSize,
-              fontWeight: isBold ? FontWeight.w600 : FontWeight.w500,
-              color: (isLight ? Colors.black : Colors.white).withOpacity(
-                isBold ? 1.0 : 0.7,
-              ),
-            ),
-            overflow: TextOverflow.ellipsis,
-          ),
-        ),
-      ],
-    );
-  }
-}
 
 class _ResponsiveEmptyState extends StatelessWidget {
   final Size screenSize;
@@ -924,1153 +1092,87 @@ class _ResponsiveEmptyState extends StatelessWidget {
     final iconSize = isTablet ? 80.0 : 64.0;
     final titleFontSize = isTablet ? 28.0 : 24.0;
     final subtitleFontSize = isTablet ? 18.0 : 16.0;
-    final buttonPadding = EdgeInsets.symmetric(
-      horizontal: isTablet ? 32 : 24,
-      vertical: isTablet ? 16 : 12,
-    );
 
-    return Center(
-      child: Column(
-        mainAxisAlignment: MainAxisAlignment.center,
-        children: [
-          Container(
-            padding: EdgeInsets.all(isTablet ? 40 : 32),
-            decoration: const BoxDecoration(
-              color: Color(0xFFF1F5F9),
-              shape: BoxShape.circle,
-            ),
-            child: Icon(
-              Icons.school_outlined,
-              size: iconSize,
-              color: const Color(0xFF64748B),
-            ),
-          ),
-          SizedBox(height: isTablet ? 32 : 24),
-          Text(
-            'No Classes Yet',
-            style: GoogleFonts.inter(
-              fontSize: titleFontSize,
-              fontWeight: FontWeight.w700,
-              color: const Color(0xFF1E293B),
-            ),
-          ),
-          SizedBox(height: isTablet ? 12 : 8),
-          Text(
-            'Create your first class to start studying',
-            style: GoogleFonts.inter(
-              fontSize: subtitleFontSize,
-              color: const Color(0xFF64748B),
-            ),
-            textAlign: TextAlign.center,
-          ),
-          SizedBox(height: isTablet ? 40 : 32),
-          ElevatedButton.icon(
-            onPressed: () {
-              // Navigate to create class screen
-            },
-            icon: Icon(Icons.add, size: isTablet ? 24 : 20),
-            label: const Text('Create Class'),
-            style: ElevatedButton.styleFrom(
-              backgroundColor: const Color(0xFF3B82F6),
-              foregroundColor: Colors.white,
-              padding: buttonPadding,
-              shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(16),
-              ),
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-// Responsive Class Detail Screen
-class ResponsiveClassDetailScreen extends StatefulWidget {
-  final Map<String, dynamic> data;
-  final Color cardColor;
-  final String docId;
-  final Size screenSize;
-
-  const ResponsiveClassDetailScreen({
-    super.key,
-    required this.data,
-    required this.cardColor,
-    required this.docId,
-    required this.screenSize,
-  });
-
-  @override
-  State<ResponsiveClassDetailScreen> createState() =>
-      _ResponsiveClassDetailScreenState();
-}
-
-class _ResponsiveClassDetailScreenState
-    extends State<ResponsiveClassDetailScreen>
-    with TickerProviderStateMixin {
-  late Stream<DocumentSnapshot<Map<String, dynamic>>> _classStream;
-  bool _editTopics = false;
-  late AnimationController _animationController;
-  late Animation<double> _fadeInAnimation;
-
-  @override
-  void initState() {
-    super.initState();
-    _classStream =
-        FirebaseFirestore.instance
-            .collection('Classes')
-            .doc(widget.docId)
-            .snapshots();
-
-    _animationController = AnimationController(
-      duration: const Duration(milliseconds: 600),
-      vsync: this,
-    );
-    _fadeInAnimation = Tween<double>(begin: 0.0, end: 1.0).animate(
-      CurvedAnimation(parent: _animationController, curve: Curves.easeInOut),
-    );
-    _animationController.forward();
-  }
-
-  @override
-  void dispose() {
-    _animationController.dispose();
-    super.dispose();
-  }
-
-  // Add topic dialog with responsive design
-  Future<void> _showAddTopicDialog() async {
-    final isTablet = widget.screenSize.width > 600;
-    String topicTitle = '';
-
-    await showDialog(
-      context: context,
-      builder:
-          (context) => AlertDialog(
-            shape: RoundedRectangleBorder(
-              borderRadius: BorderRadius.circular(isTablet ? 24 : 20),
-            ),
-            title: Row(
-              children: [
-                Container(
-                  padding: EdgeInsets.all(isTablet ? 12 : 8),
-                  decoration: BoxDecoration(
-                    color: const Color(0xFF3B82F6).withOpacity(0.1),
-                    borderRadius: BorderRadius.circular(12),
-                  ),
-                  child: Icon(
-                    Icons.add,
-                    color: const Color(0xFF3B82F6),
-                    size: isTablet ? 24 : 20,
-                  ),
-                ),
-                SizedBox(width: isTablet ? 16 : 12),
-                Text(
-                  'Create Topic',
-                  style: GoogleFonts.inter(
-                    fontSize: isTablet ? 20 : 18,
-                    fontWeight: FontWeight.w600,
-                  ),
-                ),
-              ],
-            ),
-            content: SizedBox(
-              width: isTablet ? 400 : double.maxFinite,
-              child: TextField(
-                autofocus: true,
-                style: GoogleFonts.inter(fontSize: isTablet ? 16 : 14),
-                decoration: InputDecoration(
-                  labelText: 'Topic Title',
-                  hintText: 'Enter topic name...',
-                  border: OutlineInputBorder(
-                    borderRadius: BorderRadius.circular(12),
-                  ),
-                  focusedBorder: OutlineInputBorder(
-                    borderRadius: BorderRadius.circular(12),
-                    borderSide: const BorderSide(
-                      color: Color(0xFF3B82F6),
-                      width: 2,
-                    ),
-                  ),
-                  contentPadding: EdgeInsets.symmetric(
-                    horizontal: isTablet ? 16 : 12,
-                    vertical: isTablet ? 16 : 12,
-                  ),
-                ),
-                onChanged: (val) => topicTitle = val,
-              ),
-            ),
-            actionsPadding: EdgeInsets.all(isTablet ? 24 : 16),
-            actions: [
-              TextButton(
-                onPressed: () => Navigator.pop(context),
-                child: Text(
-                  'Cancel',
-                  style: GoogleFonts.inter(
-                    fontSize: isTablet ? 16 : 14,
-                    fontWeight: FontWeight.w500,
-                  ),
-                ),
-              ),
-              ElevatedButton(
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: const Color(0xFF3B82F6),
-                  foregroundColor: Colors.white,
-                  padding: EdgeInsets.symmetric(
-                    horizontal: isTablet ? 24 : 20,
-                    vertical: isTablet ? 12 : 10,
-                  ),
-                  shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(12),
-                  ),
-                ),
-                onPressed: () async {
-                  if (topicTitle.trim().isNotEmpty) {
-                    try {
-                      await FirebaseFirestore.instance
-                          .collection('Classes')
-                          .doc(widget.docId)
-                          .collection('topics')
-                          .add({
-                            'title': topicTitle.trim(),
-                            'description': '',
-                            'created': FieldValue.serverTimestamp(),
-                          });
-                      Navigator.pop(context);
-
-                      // Show success message
-                      ScaffoldMessenger.of(context).showSnackBar(
-                        SnackBar(
-                          content: Text(
-                            'Topic "$topicTitle" created successfully!',
-                            style: GoogleFonts.inter(),
-                          ),
-                          backgroundColor: Colors.green,
-                          behavior: SnackBarBehavior.floating,
-                          shape: RoundedRectangleBorder(
-                            borderRadius: BorderRadius.circular(12),
-                          ),
-                        ),
-                      );
-                    } catch (e) {
-                      ScaffoldMessenger.of(context).showSnackBar(
-                        SnackBar(
-                          content: Text('Error creating topic: $e'),
-                          backgroundColor: Colors.red,
-                          behavior: SnackBarBehavior.floating,
-                          shape: RoundedRectangleBorder(
-                            borderRadius: BorderRadius.circular(12),
-                          ),
-                        ),
-                      );
-                    }
-                  }
-                },
-                child: Text(
-                  'Create',
-                  style: GoogleFonts.inter(
-                    fontSize: isTablet ? 16 : 14,
-                    fontWeight: FontWeight.w600,
-                  ),
-                ),
-              ),
-            ],
-          ),
-    );
-  }
-
-  // Edit topic dialog
-  Future<void> _showEditTopicDialog(String topicId, String currentTitle) async {
-    final isTablet = widget.screenSize.width > 600;
-    String topicTitle = currentTitle;
-    final TextEditingController controller = TextEditingController(
-      text: currentTitle,
-    );
-
-    await showDialog(
-      context: context,
-      builder:
-          (context) => AlertDialog(
-            shape: RoundedRectangleBorder(
-              borderRadius: BorderRadius.circular(isTablet ? 24 : 20),
-            ),
-            title: Row(
-              children: [
-                Container(
-                  padding: EdgeInsets.all(isTablet ? 12 : 8),
-                  decoration: BoxDecoration(
-                    color: Colors.orange.withOpacity(0.1),
-                    borderRadius: BorderRadius.circular(12),
-                  ),
-                  child: Icon(
-                    Icons.edit,
-                    color: Colors.orange,
-                    size: isTablet ? 24 : 20,
-                  ),
-                ),
-                SizedBox(width: isTablet ? 16 : 12),
-                Text(
-                  'Edit Topic',
-                  style: GoogleFonts.inter(
-                    fontSize: isTablet ? 20 : 18,
-                    fontWeight: FontWeight.w600,
-                  ),
-                ),
-              ],
-            ),
-            content: SizedBox(
-              width: isTablet ? 400 : double.maxFinite,
-              child: TextField(
-                controller: controller,
-                autofocus: true,
-                style: GoogleFonts.inter(fontSize: isTablet ? 16 : 14),
-                decoration: InputDecoration(
-                  labelText: 'Topic Title',
-                  border: OutlineInputBorder(
-                    borderRadius: BorderRadius.circular(12),
-                  ),
-                  focusedBorder: OutlineInputBorder(
-                    borderRadius: BorderRadius.circular(12),
-                    borderSide: const BorderSide(
-                      color: Colors.orange,
-                      width: 2,
-                    ),
-                  ),
-                  contentPadding: EdgeInsets.symmetric(
-                    horizontal: isTablet ? 16 : 12,
-                    vertical: isTablet ? 16 : 12,
-                  ),
-                ),
-                onChanged: (val) => topicTitle = val,
-              ),
-            ),
-            actionsPadding: EdgeInsets.all(isTablet ? 24 : 16),
-            actions: [
-              TextButton(
-                onPressed: () => Navigator.pop(context),
-                child: Text(
-                  'Cancel',
-                  style: GoogleFonts.inter(
-                    fontSize: isTablet ? 16 : 14,
-                    fontWeight: FontWeight.w500,
-                  ),
-                ),
-              ),
-              ElevatedButton(
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: Colors.orange,
-                  foregroundColor: Colors.white,
-                  padding: EdgeInsets.symmetric(
-                    horizontal: isTablet ? 24 : 20,
-                    vertical: isTablet ? 12 : 10,
-                  ),
-                  shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(12),
-                  ),
-                ),
-                onPressed: () async {
-                  if (topicTitle.trim().isNotEmpty &&
-                      topicTitle.trim() != currentTitle) {
-                    try {
-                      await FirebaseFirestore.instance
-                          .collection('Classes')
-                          .doc(widget.docId)
-                          .collection('topics')
-                          .doc(topicId)
-                          .update({
-                            'title': topicTitle.trim(),
-                            'updated': FieldValue.serverTimestamp(),
-                          });
-                      Navigator.pop(context);
-
-                      ScaffoldMessenger.of(context).showSnackBar(
-                        SnackBar(
-                          content: const Text('Topic updated successfully!'),
-                          backgroundColor: Colors.green,
-                          behavior: SnackBarBehavior.floating,
-                          shape: RoundedRectangleBorder(
-                            borderRadius: BorderRadius.circular(12),
-                          ),
-                        ),
-                      );
-                    } catch (e) {
-                      ScaffoldMessenger.of(context).showSnackBar(
-                        SnackBar(
-                          content: Text('Error updating topic: $e'),
-                          backgroundColor: Colors.red,
-                          behavior: SnackBarBehavior.floating,
-                          shape: RoundedRectangleBorder(
-                            borderRadius: BorderRadius.circular(12),
-                          ),
-                        ),
-                      );
-                    }
-                  } else {
-                    Navigator.pop(context);
-                  }
-                },
-                child: Text(
-                  'Update',
-                  style: GoogleFonts.inter(
-                    fontSize: isTablet ? 16 : 14,
-                    fontWeight: FontWeight.w600,
-                  ),
-                ),
-              ),
-            ],
-          ),
-    );
-  }
-
-  // Delete confirmation dialog
-  Future<void> _showDeleteConfirmationDialog(
-    String topicId,
-    String topicTitle,
-  ) async {
-    final isTablet = widget.screenSize.width > 600;
-
-    await showDialog(
-      context: context,
-      builder:
-          (context) => AlertDialog(
-            shape: RoundedRectangleBorder(
-              borderRadius: BorderRadius.circular(isTablet ? 24 : 20),
-            ),
-            title: Row(
-              children: [
-                Container(
-                  padding: EdgeInsets.all(isTablet ? 12 : 8),
-                  decoration: BoxDecoration(
-                    color: Colors.red.withOpacity(0.1),
-                    borderRadius: BorderRadius.circular(12),
-                  ),
-                  child: Icon(
-                    Icons.delete,
-                    color: Colors.red,
-                    size: isTablet ? 24 : 20,
-                  ),
-                ),
-                SizedBox(width: isTablet ? 16 : 12),
-                Expanded(
-                  child: Text(
-                    'Delete Topic',
-                    style: GoogleFonts.inter(
-                      fontSize: isTablet ? 20 : 18,
-                      fontWeight: FontWeight.w600,
-                    ),
-                  ),
-                ),
-              ],
-            ),
-            content: Text(
-              'Are you sure you want to delete "$topicTitle"?\n\nThis will also delete all files and content associated with this topic.',
-              style: GoogleFonts.inter(
-                height: 1.5,
-                fontSize: isTablet ? 16 : 14,
-              ),
-            ),
-            actionsPadding: EdgeInsets.all(isTablet ? 24 : 16),
-            actions: [
-              TextButton(
-                onPressed: () => Navigator.pop(context),
-                child: Text(
-                  'Cancel',
-                  style: GoogleFonts.inter(
-                    fontSize: isTablet ? 16 : 14,
-                    fontWeight: FontWeight.w500,
-                  ),
-                ),
-              ),
-              ElevatedButton(
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: Colors.red,
-                  foregroundColor: Colors.white,
-                  padding: EdgeInsets.symmetric(
-                    horizontal: isTablet ? 24 : 20,
-                    vertical: isTablet ? 12 : 10,
-                  ),
-                  shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(12),
-                  ),
-                ),
-                onPressed: () async {
-                  try {
-                    // Delete all files in the topic first
-                    final filesSnapshot =
-                        await FirebaseFirestore.instance
-                            .collection('Classes')
-                            .doc(widget.docId)
-                            .collection('topics')
-                            .doc(topicId)
-                            .collection('files')
-                            .get();
-
-                    for (var fileDoc in filesSnapshot.docs) {
-                      await fileDoc.reference.delete();
-                    }
-
-                    // Then delete the topic
-                    await FirebaseFirestore.instance
-                        .collection('Classes')
-                        .doc(widget.docId)
-                        .collection('topics')
-                        .doc(topicId)
-                        .delete();
-
-                    Navigator.pop(context);
-
-                    ScaffoldMessenger.of(context).showSnackBar(
-                      SnackBar(
-                        content: const Text('Topic deleted successfully!'),
-                        backgroundColor: Colors.green,
-                        behavior: SnackBarBehavior.floating,
-                        shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(12),
-                        ),
-                      ),
-                    );
-                  } catch (e) {
-                    ScaffoldMessenger.of(context).showSnackBar(
-                      SnackBar(
-                        content: Text('Error deleting topic: $e'),
-                        backgroundColor: Colors.red,
-                        behavior: SnackBarBehavior.floating,
-                        shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(12),
-                        ),
-                      ),
-                    );
-                  }
-                },
-                child: Text(
-                  'Delete',
-                  style: GoogleFonts.inter(
-                    fontSize: isTablet ? 16 : 14,
-                    fontWeight: FontWeight.w600,
-                  ),
-                ),
-              ),
-            ],
-          ),
-    );
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final isTablet = widget.screenSize.width > 600;
-    final isLight =
-        ThemeData.estimateBrightnessForColor(widget.cardColor) ==
-        Brightness.light;
-    final expandedHeight = isTablet ? 240.0 : 200.0;
-
-    return Scaffold(
-      backgroundColor: Colors.grey[50],
-      body: CustomScrollView(
-        slivers: [
-          // Responsive App Bar
-          SliverAppBar(
-            expandedHeight: expandedHeight,
-            floating: false,
-            pinned: true,
-            backgroundColor: widget.cardColor,
-            foregroundColor: isLight ? Colors.black : Colors.white,
-            flexibleSpace: FlexibleSpaceBar(
-              title: FadeTransition(
-                opacity: _fadeInAnimation,
-                child: Text(
-                  widget.data['title'] ?? 'Class Details',
-                  style: GoogleFonts.inter(
-                    fontWeight: FontWeight.w700,
-                    fontSize: isTablet ? 22.0 : 20.0,
-                  ),
-                ),
-              ),
-              background: Container(
-                decoration: BoxDecoration(
-                  gradient: LinearGradient(
-                    begin: Alignment.topLeft,
-                    end: Alignment.bottomRight,
-                    colors: [
-                      widget.cardColor,
-                      widget.cardColor.withOpacity(0.8),
-                    ],
-                  ),
-                ),
-                child: Stack(
-                  children: [
-                    // Background pattern
-                    Positioned(
-                      top: -50,
-                      right: -50,
-                      child: Container(
-                        width: isTablet ? 220 : 200,
-                        height: isTablet ? 220 : 200,
-                        decoration: BoxDecoration(
-                          color: (isLight ? Colors.black : Colors.white)
-                              .withOpacity(0.05),
-                          shape: BoxShape.circle,
-                        ),
-                      ),
-                    ),
-                    Positioned(
-                      bottom: -30,
-                      left: -30,
-                      child: Container(
-                        width: isTablet ? 120 : 100,
-                        height: isTablet ? 120 : 100,
-                        decoration: BoxDecoration(
-                          color: (isLight ? Colors.black : Colors.white)
-                              .withOpacity(0.03),
-                          shape: BoxShape.circle,
-                        ),
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-            ),
-            actions: [
-              Container(
-                margin: EdgeInsets.only(right: isTablet ? 12 : 8),
-                decoration: BoxDecoration(
-                  color: (isLight ? Colors.black : Colors.white).withOpacity(
-                    0.1,
-                  ),
-                  borderRadius: BorderRadius.circular(12),
-                ),
-                child: IconButton(
-                  icon: Icon(_editTopics ? Icons.check : Icons.edit),
-                  tooltip: _editTopics ? 'Done Editing' : 'Edit Topics',
-                  iconSize: isTablet ? 24 : 20,
-                  onPressed: () {
-                    setState(() {
-                      _editTopics = !_editTopics;
-                    });
-                  },
-                ),
-              ),
-              Container(
-                margin: EdgeInsets.only(right: isTablet ? 20 : 16),
-                decoration: BoxDecoration(
-                  color: (isLight ? Colors.black : Colors.white).withOpacity(
-                    0.1,
-                  ),
-                  borderRadius: BorderRadius.circular(12),
-                ),
-                child: IconButton(
-                  icon: const Icon(Icons.add),
-                  tooltip: 'Create Topic',
-                  iconSize: isTablet ? 24 : 20,
-                  onPressed: _showAddTopicDialog,
-                ),
-              ),
-            ],
-          ),
-
-          StreamBuilder<DocumentSnapshot<Map<String, dynamic>>>(
-            stream: _classStream,
-            builder: (context, snapshot) {
-              final data = snapshot.data?.data() ?? widget.data;
-
-              return SliverPadding(
-                padding: EdgeInsets.all(isTablet ? 32.0 : 24.0),
-                sliver: SliverList(
-                  delegate: SliverChildListDelegate([
-                    // Class details card
-                    FadeTransition(
-                      opacity: _fadeInAnimation,
-                      child: Container(
-                        padding: EdgeInsets.all(isTablet ? 32 : 24),
-                        decoration: BoxDecoration(
-                          color: Colors.white,
-                          borderRadius: BorderRadius.circular(
-                            isTablet ? 24 : 20,
-                          ),
-                          boxShadow: [
-                            BoxShadow(
-                              color: Colors.black.withOpacity(0.08),
-                              blurRadius: 20,
-                              offset: const Offset(0, 8),
-                            ),
-                          ],
-                        ),
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Text(
-                              'Class Details',
-                              style: GoogleFonts.inter(
-                                fontSize: isTablet ? 22 : 18,
-                                fontWeight: FontWeight.w700,
-                                color: const Color(0xFF1E293B),
-                              ),
-                            ),
-                            SizedBox(height: isTablet ? 24 : 20),
-                            _ResponsiveDetailRow(
-                              icon: CupertinoIcons.time,
-                              text: data['time'] ?? 'No time set',
-                              isLight: true,
-                              screenSize: widget.screenSize,
-                            ),
-                            SizedBox(height: isTablet ? 20 : 16),
-                            _ResponsiveDetailRow(
-                              icon: CupertinoIcons.person,
-                              text: data['teacher'] ?? 'No teacher assigned',
-                              isLight: true,
-                              screenSize: widget.screenSize,
-                              isBold: true,
-                            ),
-                            SizedBox(height: isTablet ? 20 : 16),
-                            _ResponsiveDetailRow(
-                              icon: CupertinoIcons.location,
-                              text: data['location'] ?? 'No location set',
-                              isLight: true,
-                              screenSize: widget.screenSize,
-                            ),
-                          ],
-                        ),
-                      ),
-                    ),
-
-                    SizedBox(height: isTablet ? 40 : 32),
-
-                    // Topics section
-                    FadeTransition(
-                      opacity: _fadeInAnimation,
-                      child: Row(
-                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                        children: [
-                          Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              Text(
-                                'Topics',
-                                style: GoogleFonts.inter(
-                                  fontSize: isTablet ? 28 : 24,
-                                  fontWeight: FontWeight.w700,
-                                  color: const Color(0xFF1E293B),
-                                ),
-                              ),
-                              SizedBox(height: isTablet ? 6 : 4),
-                              Text(
-                                'Organize your study materials',
-                                style: GoogleFonts.inter(
-                                  fontSize: isTablet ? 16 : 14,
-                                  color: const Color(0xFF64748B),
-                                ),
-                              ),
-                            ],
-                          ),
-                          if (_editTopics)
-                            Container(
-                              padding: EdgeInsets.symmetric(
-                                horizontal: isTablet ? 20 : 16,
-                                vertical: isTablet ? 10 : 8,
-                              ),
-                              decoration: BoxDecoration(
-                                gradient: const LinearGradient(
-                                  colors: [
-                                    Color(0xFFF59E0B),
-                                    Color(0xFFD97706),
-                                  ],
-                                ),
-                                borderRadius: BorderRadius.circular(16),
-                                boxShadow: [
-                                  BoxShadow(
-                                    color: const Color(
-                                      0xFFF59E0B,
-                                    ).withOpacity(0.3),
-                                    blurRadius: 8,
-                                    offset: const Offset(0, 4),
-                                  ),
-                                ],
-                              ),
-                              child: Row(
-                                mainAxisSize: MainAxisSize.min,
-                                children: [
-                                  Icon(
-                                    Icons.edit,
-                                    color: Colors.white,
-                                    size: isTablet ? 18 : 16,
-                                  ),
-                                  SizedBox(width: isTablet ? 10 : 8),
-                                  Text(
-                                    'Edit Mode',
-                                    style: GoogleFonts.inter(
-                                      fontSize: isTablet ? 14 : 12,
-                                      fontWeight: FontWeight.w600,
-                                      color: Colors.white,
-                                    ),
-                                  ),
-                                ],
-                              ),
-                            ),
-                        ],
-                      ),
-                    ),
-
-                    SizedBox(height: isTablet ? 24 : 20),
-
-                    // Topics list
-                    StreamBuilder<QuerySnapshot>(
-                      stream:
-                          FirebaseFirestore.instance
-                              .collection('Classes')
-                              .doc(widget.docId)
-                              .collection('topics')
-                              .orderBy('created', descending: true)
-                              .snapshots(),
-                      builder: (context, topicSnapshot) {
-                        if (!topicSnapshot.hasData ||
-                            topicSnapshot.data!.docs.isEmpty) {
-                          return FadeTransition(
-                            opacity: _fadeInAnimation,
-                            child: Container(
-                              padding: EdgeInsets.all(isTablet ? 48 : 40),
-                              decoration: BoxDecoration(
-                                color: const Color(0xFFF1F5F9),
-                                borderRadius: BorderRadius.circular(
-                                  isTablet ? 24 : 20,
-                                ),
-                                border: Border.all(
-                                  color: const Color(0xFFE2E8F0),
-                                ),
-                              ),
-                              child: Column(
-                                children: [
-                                  Container(
-                                    padding: EdgeInsets.all(isTablet ? 24 : 20),
-                                    decoration: const BoxDecoration(
-                                      color: Colors.white,
-                                      shape: BoxShape.circle,
-                                    ),
-                                    child: Icon(
-                                      Icons.topic_outlined,
-                                      size: isTablet ? 56 : 48,
-                                      color: const Color(0xFF64748B),
-                                    ),
-                                  ),
-                                  SizedBox(height: isTablet ? 20 : 16),
-                                  Text(
-                                    'No topics created yet',
-                                    style: GoogleFonts.inter(
-                                      fontSize: isTablet ? 22 : 18,
-                                      fontWeight: FontWeight.w600,
-                                      color: const Color(0xFF1E293B),
-                                    ),
-                                  ),
-                                  SizedBox(height: isTablet ? 12 : 8),
-                                  Text(
-                                    'Tap the + button to create your first topic',
-                                    style: GoogleFonts.inter(
-                                      fontSize: isTablet ? 16 : 14,
-                                      color: const Color(0xFF64748B),
-                                    ),
-                                    textAlign: TextAlign.center,
-                                  ),
-                                ],
-                              ),
-                            ),
-                          );
-                        }
-
-                        return Column(
-                          children: List.generate(
-                            topicSnapshot.data!.docs.length,
-                            (index) {
-                              final doc = topicSnapshot.data!.docs[index];
-                              final topicData =
-                                  doc.data() as Map<String, dynamic>;
-                              final topicTitle = topicData['title'] ?? '';
-
-                              return FadeTransition(
-                                opacity: _fadeInAnimation,
-                                child: Container(
-                                  margin: EdgeInsets.only(
-                                    bottom: isTablet ? 16 : 12,
-                                  ),
-                                  child: _ResponsiveTopicCard(
-                                    topicTitle: topicTitle,
-                                    topicId: doc.id,
-                                    editMode: _editTopics,
-                                    screenSize: widget.screenSize,
-                                    onTap:
-                                        _editTopics
-                                            ? null
-                                            : () {
-                                              // Navigate to topic detail screen
-                                              Navigator.push(
-                                                context,
-                                                PageRouteBuilder(
-                                                  pageBuilder:
-                                                      (
-                                                        context,
-                                                        animation,
-                                                        secondaryAnimation,
-                                                      ) => TopicDetailScreen(
-                                                        classId: widget.docId,
-                                                        topicId: doc.id,
-                                                        topicTitle: topicTitle,
-                                                      ),
-                                                  transitionsBuilder: (
-                                                    context,
-                                                    animation,
-                                                    secondaryAnimation,
-                                                    child,
-                                                  ) {
-                                                    return SlideTransition(
-                                                      position: animation.drive(
-                                                        Tween(
-                                                          begin: const Offset(
-                                                            1.0,
-                                                            0.0,
-                                                          ),
-                                                          end: Offset.zero,
-                                                        ),
-                                                      ),
-                                                      child: child,
-                                                    );
-                                                  },
-                                                ),
-                                              );
-                                            },
-                                    onEdit:
-                                        () => _showEditTopicDialog(
-                                          doc.id,
-                                          topicTitle,
-                                        ),
-                                    onDelete:
-                                        () => _showDeleteConfirmationDialog(
-                                          doc.id,
-                                          topicTitle,
-                                        ),
-                                  ),
-                                ),
-                              );
-                            },
-                          ),
-                        );
-                      },
-                    ),
-                  ]),
-                ),
-              );
-            },
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-// Responsive Topic Card Widget
-class _ResponsiveTopicCard extends StatefulWidget {
-  final String topicTitle;
-  final String topicId;
-  final bool editMode;
-  final Size screenSize;
-  final VoidCallback? onTap;
-  final VoidCallback onEdit;
-  final VoidCallback onDelete;
-
-  const _ResponsiveTopicCard({
-    required this.topicTitle,
-    required this.topicId,
-    required this.editMode,
-    required this.screenSize,
-    this.onTap,
-    required this.onEdit,
-    required this.onDelete,
-  });
-
-  @override
-  State<_ResponsiveTopicCard> createState() => _ResponsiveTopicCardState();
-}
-
-class _ResponsiveTopicCardState extends State<_ResponsiveTopicCard>
-    with SingleTickerProviderStateMixin {
-  late AnimationController _controller;
-  late Animation<double> _scaleAnimation;
-
-  @override
-  void initState() {
-    super.initState();
-    _controller = AnimationController(
-      duration: const Duration(milliseconds: 150),
-      vsync: this,
-    );
-    _scaleAnimation = Tween<double>(
-      begin: 1.0,
-      end: 0.98,
-    ).animate(CurvedAnimation(parent: _controller, curve: Curves.easeInOut));
-  }
-
-  @override
-  void dispose() {
-    _controller.dispose();
-    super.dispose();
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final isTablet = widget.screenSize.width > 600;
-
-    return GestureDetector(
-      onTapDown: widget.onTap != null ? (_) => _controller.forward() : null,
-      onTapUp:
-          widget.onTap != null
-              ? (_) {
-                _controller.reverse();
-                widget.onTap!();
-              }
-              : null,
-      onTapCancel: () => _controller.reverse(),
-      child: ScaleTransition(
-        scale: _scaleAnimation,
-        child: Container(
-          padding: EdgeInsets.all(isTablet ? 24 : 20),
-          decoration: BoxDecoration(
-            color: widget.editMode ? const Color(0xFFFEF3C7) : Colors.white,
-            borderRadius: BorderRadius.circular(isTablet ? 20 : 16),
-            border:
-                widget.editMode
-                    ? Border.all(color: const Color(0xFFF59E0B), width: 2)
-                    : Border.all(color: const Color(0xFFE2E8F0)),
-            boxShadow: [
-              BoxShadow(
-                color:
-                    widget.editMode
-                        ? const Color(0xFFF59E0B).withOpacity(0.2)
-                        : Colors.black.withOpacity(0.05),
-                blurRadius: widget.editMode ? 12 : 8,
-                offset: const Offset(0, 4),
-              ),
-            ],
-          ),
-          child: Row(
+    return SingleChildScrollView(
+      child: SizedBox(
+        height: MediaQuery.of(context).size.height * 0.6, // Ensure enough height for centering
+        child: Center(
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
             children: [
-              if (widget.editMode)
-                Container(
-                  margin: EdgeInsets.only(right: isTablet ? 20 : 16),
-                  padding: EdgeInsets.all(isTablet ? 12 : 10),
-                  decoration: BoxDecoration(
-                    color: const Color(0xFFF59E0B).withOpacity(0.2),
-                    shape: BoxShape.circle,
-                  ),
-                  child: Icon(
-                    Icons.edit,
-                    size: isTablet ? 20 : 18,
-                    color: const Color(0xFFF59E0B),
-                  ),
-                )
-              else
-                Container(
-                  margin: EdgeInsets.only(right: isTablet ? 20 : 16),
-                  padding: EdgeInsets.all(isTablet ? 12 : 10),
-                  decoration: BoxDecoration(
-                    color: const Color(0xFF3B82F6).withOpacity(0.1),
-                    shape: BoxShape.circle,
-                  ),
-                  child: Icon(
-                    Icons.topic_outlined,
-                    size: isTablet ? 20 : 18,
-                    color: const Color(0xFF3B82F6),
-                  ),
+              Container(
+                padding: EdgeInsets.all(isTablet ? 40 : 32),
+                decoration: const BoxDecoration(
+                  color: Color(0xFFF1F5F9),
+                  shape: BoxShape.circle,
                 ),
-              Expanded(
-                child: Text(
-                  widget.topicTitle,
-                  style: GoogleFonts.inter(
-                    fontSize: isTablet ? 18 : 16,
-                    fontWeight: FontWeight.w600,
-                    color:
-                        widget.editMode
-                            ? const Color(0xFF92400E)
-                            : const Color(0xFF1E293B),
-                  ),
+                child: Icon(
+                  Icons.school_outlined,
+                  size: iconSize,
+                  color: const Color(0xFF64748B),
                 ),
               ),
-              if (widget.editMode)
-                Row(
+              SizedBox(height: isTablet ? 32 : 24),
+              Text(
+                'No Classes Yet',
+                style: GoogleFonts.inter(
+                  fontSize: titleFontSize,
+                  fontWeight: FontWeight.w700,
+                  color: const Color(0xFF1E293B),
+                ),
+              ),
+              SizedBox(height: isTablet ? 12 : 8),
+              Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 32),
+                child: Text(
+                  'Your classes will appear here once you create them',
+                  style: GoogleFonts.inter(
+                    fontSize: subtitleFontSize,
+                    color: const Color(0xFF64748B),
+                    height: 1.4,
+                  ),
+                  textAlign: TextAlign.center,
+                ),
+              ),
+              SizedBox(height: isTablet ? 24 : 16),
+              // Optional: Add a small hint about where to create classes
+              Container(
+                padding: EdgeInsets.symmetric(
+                  horizontal: isTablet ? 24 : 20,
+                  vertical: isTablet ? 16 : 12,
+                ),
+                decoration: BoxDecoration(
+                  color: Colors.blue[50],
+                  borderRadius: BorderRadius.circular(12),
+                  border: Border.all(color: Colors.blue[100]!),
+                ),
+                child: Row(
                   mainAxisSize: MainAxisSize.min,
                   children: [
-                    IconButton(
-                      icon: Icon(
-                        Icons.edit_outlined,
-                        color: const Color(0xFF3B82F6),
-                        size: isTablet ? 22 : 20,
-                      ),
-                      tooltip: 'Edit Topic Name',
-                      onPressed: widget.onEdit,
+                    Icon(
+                      Icons.info_outline,
+                      color: Colors.blue[600],
+                      size: isTablet ? 20 : 18,
                     ),
-                    IconButton(
-                      icon: Icon(
-                        Icons.delete_outline,
-                        color: Colors.red,
-                        size: isTablet ? 22 : 20,
+                    SizedBox(width: isTablet ? 12 : 8),
+                    Flexible(
+                      child: Text(
+                        'Create classes from the Classes tab',
+                        style: GoogleFonts.inter(
+                          fontSize: isTablet ? 14 : 12,
+                          color: Colors.blue[700],
+                          fontWeight: FontWeight.w500,
+                        ),
+                        textAlign: TextAlign.center,
                       ),
-                      tooltip: 'Delete Topic',
-                      onPressed: widget.onDelete,
                     ),
                   ],
-                )
-              else
-                Icon(
-                  Icons.arrow_forward_ios_rounded,
-                  size: isTablet ? 18 : 16,
-                  color: const Color(0xFF9CA3AF),
                 ),
+              ),
             ],
           ),
         ),
       ),
     );
   }
-}
-
-// Add placeholder for TopicDetailScreen
-class TopicDetailScreen extends StatelessWidget {
-  final String classId;
-  final String topicId;
-  final String topicTitle;
-
-  const TopicDetailScreen({
-    super.key,
-    required this.classId,
-    required this.topicId,
-    required this.topicTitle,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    return Scaffold(
-      appBar: AppBar(
-        title: Text(topicTitle),
-        backgroundColor: const Color(0xFF3B82F6),
-        foregroundColor: Colors.white,
-      ),
-      body: Center(
-        child: Text(
-          'Topic Detail Screen\nClass: $classId\nTopic: $topicTitle',
-          textAlign: TextAlign.center,
-          style: GoogleFonts.inter(fontSize: 16),
-        ),
-      ),
-    );
-  }
-}
-
-Future<Map<String, dynamic>?> _getLatestNoteForSubject(String subject) async {
-  final normalizedSubject = subject.trim().toLowerCase();
-  final snapshot =
-      await FirebaseFirestore.instance
-          .collection('Notes')
-          .where('subject_normalized', isEqualTo: normalizedSubject)
-          .orderBy('updatedAt', descending: true)
-          .limit(1)
-          .get();
-  if (snapshot.docs.isNotEmpty) {
-    return snapshot.docs.first.data();
-  }
-  return null;
 }

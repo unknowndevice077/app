@@ -1,153 +1,82 @@
-import 'dart:io';
 import 'package:flutter/material.dart';
+import 'package:google_fonts/google_fonts.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:image_picker/image_picker.dart';
-import 'package:flutter_sound/flutter_sound.dart';
-import 'package:permission_handler/permission_handler.dart';
-import 'package:path_provider/path_provider.dart';
+import 'package:open_filex/open_filex.dart';
+import 'dart:io';
 
-// Attachment Manager Class
 class AttachmentManager {
   static Future<String?> pickAndSaveImage() async {
     try {
-      final picker = ImagePicker();
-      final pickedFile = await picker.pickImage(source: ImageSource.gallery);
-      
-      if (pickedFile != null) {
-        final directory = await getApplicationDocumentsDirectory();
-        final fileName = 'image_${DateTime.now().millisecondsSinceEpoch}.jpg';
-        final savedPath = '${directory.path}/$fileName';
-        
-        await File(pickedFile.path).copy(savedPath);
-        return savedPath;
-      }
+      final ImagePicker picker = ImagePicker();
+      final XFile? image = await picker.pickImage(source: ImageSource.gallery);
+      return image?.path;
     } catch (e) {
       print('Error picking image: $e');
-    }
-    return null;
-  }
-
-  static Future<String?> pickAndSaveFile() async {
-    try {
-      final result = await FilePicker.platform.pickFiles();
-      
-      if (result != null && result.files.single.path != null) {
-        final file = File(result.files.single.path!);
-        final directory = await getApplicationDocumentsDirectory();
-        final fileName = 'file_${DateTime.now().millisecondsSinceEpoch}_${result.files.single.name}';
-        final savedPath = '${directory.path}/$fileName';
-        
-        await file.copy(savedPath);
-        return savedPath;
-      }
-    } catch (e) {
-      print('Error picking file: $e');
-    }
-    return null;
-  }
-
-  static Future<String?> recordAudio(FlutterSoundRecorder recorder) async {
-    try {
-      final status = await Permission.microphone.request();
-      if (status != PermissionStatus.granted) {
-        return null;
-      }
-
-      final directory = await getApplicationDocumentsDirectory();
-      final fileName = 'audio_${DateTime.now().millisecondsSinceEpoch}.aac';
-      final audioPath = '${directory.path}/$fileName';
-
-      await recorder.startRecorder(toFile: audioPath);
-      return audioPath;
-    } catch (e) {
-      print('Error starting recording: $e');
       return null;
     }
   }
 
-  static Future<void> stopRecording(FlutterSoundRecorder recorder) async {
+  static Future<String?> pickAndSaveFile() async {
     try {
-      await recorder.stopRecorder();
+      FilePickerResult? result = await FilePicker.platform.pickFiles();
+      return result?.files.single.path;
     } catch (e) {
-      print('Error stopping recording: $e');
+      print('Error picking file: $e');
+      return null;
     }
   }
 
-  static String getAttachmentIcon(String type) {
-    switch (type.toLowerCase()) {
-      case 'image':
-        return '🖼️';
-      case 'file':
-        return '📄';
-      case 'audio':
-        return '🎵';
-      default:
-        return '📎';
+  static void openFileAttachment(BuildContext context, Map<String, dynamic> attachment) async {
+    final type = (attachment['type'] ?? '').toLowerCase();
+    final path = attachment['path'];
+    if (type.contains('image')) {
+      showDialog(
+        context: context,
+        builder: (_) => Dialog(
+          child: InteractiveViewer(
+            child: Image.file(
+              File(path),
+              fit: BoxFit.contain,
+              errorBuilder: (context, error, stackTrace) => const Icon(Icons.broken_image, size: 80),
+            ),
+          ),
+        ),
+      );
+    } else {
+      final result = await OpenFilex.open(path);
+      if (result.type != ResultType.done) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Could not open file: ${result.message}'),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
     }
   }
-
-  static String getAttachmentName(String path) {
-    return path.split('/').last;
-  }
 }
 
-// Attachment Toolbar Widget
-class AttachmentToolbar extends StatelessWidget {
-  final VoidCallback onShowAttachmentOptions;
-
-  const AttachmentToolbar({
-    super.key,
-    required this.onShowAttachmentOptions,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    return IconButton(
-      icon: const Icon(Icons.attach_file, color: Colors.black, size: 28),
-      onPressed: onShowAttachmentOptions,
-      tooltip: 'Add Attachment',
-    );
-  }
-}
-
-// Attachment Options Bottom Sheet
 class AttachmentOptionsBottomSheet extends StatelessWidget {
-  final bool isRecording;
-  final VoidCallback onPickImage;
-  final VoidCallback onPickFile;
-  final VoidCallback onToggleRecording;
+  final Future<void> Function()? onPickImage;
+  final Future<void> Function()? onPickFile;
 
   const AttachmentOptionsBottomSheet({
     super.key,
-    required this.isRecording,
-    required this.onPickImage,
-    required this.onPickFile,
-    required this.onToggleRecording,
+    this.onPickImage,
+    this.onPickFile,
   });
 
   @override
   Widget build(BuildContext context) {
     return Container(
       padding: const EdgeInsets.all(20),
-      decoration: const BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
-      ),
       child: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
-          Container(
-            width: 40,
-            height: 4,
-            margin: const EdgeInsets.only(bottom: 20),
-            decoration: BoxDecoration(
-              color: Colors.grey[300],
-              borderRadius: BorderRadius.circular(2),
-            ),
-          ),
-          const Text(
+          Text(
             'Add Attachment',
-            style: TextStyle(
+            style: GoogleFonts.dmSerifText(
               fontSize: 20,
               fontWeight: FontWeight.bold,
             ),
@@ -156,92 +85,29 @@ class AttachmentOptionsBottomSheet extends StatelessWidget {
           Row(
             mainAxisAlignment: MainAxisAlignment.spaceEvenly,
             children: [
-              _AttachmentOption(
-                icon: Icons.image,
-                label: 'Image',
-                color: Colors.blue,
-                onTap: () {
-                  Navigator.pop(context);
-                  onPickImage();
-                },
-              ),
-              _AttachmentOption(
-                icon: Icons.attach_file,
-                label: 'File',
-                color: Colors.green,
-                onTap: () {
-                  Navigator.pop(context);
-                  onPickFile();
-                },
-              ),
-              _AttachmentOption(
-                icon: isRecording ? Icons.stop : Icons.mic,
-                label: isRecording ? 'Stop' : 'Record',
-                color: isRecording ? Colors.red : Colors.orange,
-                onTap: () {
-                  Navigator.pop(context);
-                  onToggleRecording();
-                },
-              ),
+              _buildOption(Icons.image, 'Image', Colors.blue, onPickImage),
+              _buildOption(Icons.attach_file, 'File', Colors.green, onPickFile),
             ],
           ),
-          const SizedBox(height: 20),
         ],
       ),
     );
   }
-}
 
-class _AttachmentOption extends StatelessWidget {
-  final IconData icon;
-  final String label;
-  final Color color;
-  final VoidCallback onTap;
-
-  const _AttachmentOption({
-    required this.icon,
-    required this.label,
-    required this.color,
-    required this.onTap,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    return GestureDetector(
+  Widget _buildOption(IconData icon, String label, Color color, Future<void> Function()? onTap) {
+    return InkWell(
       onTap: onTap,
       child: Column(
-        mainAxisSize: MainAxisSize.min,
         children: [
-          Container(
-            width: 60,
-            height: 60,
-            decoration: BoxDecoration(
-              color: color.withOpacity(0.1),
-              borderRadius: BorderRadius.circular(30),
-              border: Border.all(color: color.withOpacity(0.3)),
-            ),
-            child: Icon(
-              icon,
-              color: color,
-              size: 30,
-            ),
-          ),
+          Icon(icon, color: color, size: 32),
           const SizedBox(height: 8),
-          Text(
-            label,
-            style: TextStyle(
-              fontSize: 14,
-              fontWeight: FontWeight.w500,
-              color: Colors.grey[700],
-            ),
-          ),
+          Text(label, style: TextStyle(color: color)),
         ],
       ),
     );
   }
 }
 
-// Attachment List Widget
 class AttachmentList extends StatelessWidget {
   final List<Map<String, dynamic>> attachments;
   final Set<int> selectedAttachments;
@@ -260,111 +126,68 @@ class AttachmentList extends StatelessWidget {
   Widget build(BuildContext context) {
     if (attachments.isEmpty) return const SizedBox.shrink();
 
-    return Container(
-      margin: const EdgeInsets.only(top: 16),
-      padding: const EdgeInsets.all(12),
-      decoration: BoxDecoration(
-        color: Colors.grey[50],
-        borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: Colors.grey[200]!),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-            children: [
-              Text(
-                'Attachments (${attachments.length})',
-                style: const TextStyle(
-                  fontSize: 14,
-                  fontWeight: FontWeight.bold,
-                ),
-              ),
-              if (selectedAttachments.isNotEmpty)
-                TextButton(
-                  onPressed: onRemoveSelected,
-                  child: Text(
-                    'Remove (${selectedAttachments.length})',
-                    style: const TextStyle(color: Colors.red),
-                  ),
-                ),
-            ],
-          ),
-          const SizedBox(height: 8),
-          ...attachments.asMap().entries.map((entry) {
-            final index = entry.key;
-            final attachment = entry.value;
-            final isSelected = selectedAttachments.contains(index);
-            
-            return Container(
-              margin: const EdgeInsets.only(bottom: 4),
-              child: ListTile(
-                dense: true,
-                contentPadding: const EdgeInsets.symmetric(horizontal: 8),
-                leading: Container(
-                  width: 40,
-                  height: 40,
-                  decoration: BoxDecoration(
-                    color: _getAttachmentColor(attachment['type']).withOpacity(0.1),
-                    borderRadius: BorderRadius.circular(8),
-                  ),
-                  child: Icon(
-                    _getAttachmentIcon(attachment['type']),
-                    color: _getAttachmentColor(attachment['type']),
-                  ),
-                ),
-                title: Text(
-                  AttachmentManager.getAttachmentName(attachment['path']),
-                  style: const TextStyle(fontSize: 14),
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                ),
-                subtitle: Text(
-                  attachment['type'].toUpperCase(),
-                  style: TextStyle(
-                    fontSize: 12,
-                    color: Colors.grey[600],
-                  ),
-                ),
-                trailing: Checkbox(
-                  value: isSelected,
-                  onChanged: (_) => onToggleSelection(index),
-                ),
-                selected: isSelected,
-                selectedTileColor: Colors.red.withOpacity(0.1),
-                onTap: () => onToggleSelection(index),
-              ),
+    return Column(
+      children: [
+        Text(
+          'Attachments (${attachments.length})',
+          style: GoogleFonts.inter(fontSize: 16, fontWeight: FontWeight.bold),
+        ),
+        ListView.builder(
+          shrinkWrap: true,
+          physics: const NeverScrollableScrollPhysics(),
+          itemCount: attachments.length,
+          itemBuilder: (context, index) {
+            final attachment = attachments[index];
+            final isImage = (attachment['type']?.toLowerCase() ?? '').contains('image');
+            return ListTile(
+              title: isImage
+                  ? GestureDetector(
+                      onTap: () => _openAttachment(context, attachment),
+                      child: Image.file(
+                        File(attachment['path']),
+                        height: 120,
+                        fit: BoxFit.cover,
+                        errorBuilder: (context, error, stackTrace) => const Icon(Icons.broken_image),
+                      ),
+                    )
+                  : Text(attachment['path'].split('/').last),
+              subtitle: isImage
+                  ? null
+                  : Text(attachment['type'].toUpperCase()),
+              onTap: () => _openAttachment(context, attachment),
             );
-          }),
-        ],
-      ),
+          },
+        ),
+      ],
     );
   }
 
-  IconData _getAttachmentIcon(String type) {
-    switch (type.toLowerCase()) {
-      case 'image':
-        return Icons.image;
-      case 'file':
-        return Icons.attach_file;
-      case 'audio':
-        return Icons.audiotrack;
-      default:
-        return Icons.attachment;
-    }
-  }
-
-  Color _getAttachmentColor(String type) {
-    switch (type.toLowerCase()) {
-      case 'image':
-        return Colors.blue;
-      case 'file':
-        return Colors.green;
-      case 'audio':
-        return Colors.orange;
-      default:
-        return Colors.grey;
+  static void _openAttachment(BuildContext context, Map<String, dynamic> attachment) async {
+    final type = (attachment['type'] ?? '').toLowerCase();
+    final path = attachment['path'];
+    if (type.contains('image')) {
+      showDialog(
+        context: context,
+        builder: (_) => Dialog(
+          child: InteractiveViewer(
+            child: Image.file(
+              File(path),
+              fit: BoxFit.contain,
+              errorBuilder: (context, error, stackTrace) => const Icon(Icons.broken_image, size: 80),
+            ),
+          ),
+        ),
+      );
+    } else {
+      final result = await OpenFilex.open(path);
+      if (result.type != ResultType.done) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Could not open file: ${result.message}'),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
     }
   }
 }

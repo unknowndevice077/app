@@ -1,9 +1,9 @@
 import 'package:flutter/material.dart';
 
 class Components extends StatelessWidget {
-  final String hintText; // Hint text for the TextField
-  final TextEditingController controller; // Strongly typed controller
-  final bool obscureText; // Whether to obscure the text
+  final String hintText;
+  final TextEditingController controller;
+  final bool obscureText;
 
   const Components({
     super.key,
@@ -15,17 +15,13 @@ class Components extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Container(
-      margin: const EdgeInsets.symmetric(
-        horizontal: 20.0, // Added horizontal margin for spacing
-      ), // Added margin for spacing
-      padding: const EdgeInsets.all(
-        8.0,
-      ), // Added padding directly to the Container
+      margin: const EdgeInsets.symmetric(horizontal: 20.0),
+      padding: const EdgeInsets.all(8.0),
       child: TextField(
         controller: controller,
         obscureText: obscureText,
         decoration: InputDecoration(
-          hintText: hintText, // Use the hintText parameter
+          hintText: hintText,
           hintStyle: const TextStyle(color: Color.fromARGB(255, 133, 130, 130)),
           enabledBorder: OutlineInputBorder(
             borderRadius: BorderRadius.circular(10),
