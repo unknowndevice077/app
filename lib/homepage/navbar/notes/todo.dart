@@ -199,6 +199,9 @@ class _TodoManagerState extends State<TodoManager> {
   @override
   Widget build(BuildContext context) {
     final isDark = Theme.of(context).brightness == Brightness.dark;
+    final size = MediaQuery.of(context).size;
+    final isSmallScreen = size.width < 400;
+    final isVerySmallScreen = size.width < 350;
     
     return GestureDetector(
       onTap: () => FocusScope.of(context).unfocus(),
@@ -214,18 +217,18 @@ class _TodoManagerState extends State<TodoManager> {
         ),
         child: Column(
           children: [
-            // Modern Header with Progress
+            // ✅ Responsive Header with Progress
             Container(
-              margin: const EdgeInsets.all(20),
-              padding: const EdgeInsets.all(24),
+              margin: EdgeInsets.all(isVerySmallScreen ? 12 : (isSmallScreen ? 16 : 20)),
+              padding: EdgeInsets.all(isVerySmallScreen ? 16 : (isSmallScreen ? 20 : 24)),
               decoration: BoxDecoration(
                 color: isDark ? const Color(0xFF2D2D2D) : Colors.white,
-                borderRadius: BorderRadius.circular(20),
+                borderRadius: BorderRadius.circular(isSmallScreen ? 16 : 20),
                 boxShadow: [
                   BoxShadow(
                     color: Colors.black.withOpacity(isDark ? 0.3 : 0.1),
-                    blurRadius: 20,
-                    offset: const Offset(0, 10),
+                    blurRadius: isSmallScreen ? 15 : 20,
+                    offset: const Offset(0, 6),
                   ),
                 ],
               ),
@@ -235,20 +238,20 @@ class _TodoManagerState extends State<TodoManager> {
                   Row(
                     children: [
                       Container(
-                        padding: const EdgeInsets.all(12),
+                        padding: EdgeInsets.all(isVerySmallScreen ? 8 : 12),
                         decoration: BoxDecoration(
                           gradient: const LinearGradient(
                             colors: [Color(0xFF667EEA), Color(0xFF764BA2)],
                           ),
-                          borderRadius: BorderRadius.circular(16),
+                          borderRadius: BorderRadius.circular(isSmallScreen ? 12 : 16),
                         ),
-                        child: const Icon(
+                        child: Icon(
                           Icons.checklist,
                           color: Colors.white,
-                          size: 24,
+                          size: isVerySmallScreen ? 20 : 24,
                         ),
                       ),
-                      const SizedBox(width: 16),
+                      SizedBox(width: isVerySmallScreen ? 12 : 16),
                       Expanded(
                         child: Column(
                           crossAxisAlignment: CrossAxisAlignment.start,
@@ -256,33 +259,40 @@ class _TodoManagerState extends State<TodoManager> {
                             Text(
                               'Today\'s To-Do',
                               style: GoogleFonts.inter(
-                                fontSize: 20,
+                                fontSize: isVerySmallScreen ? 16 : (isSmallScreen ? 18 : 20),
                                 fontWeight: FontWeight.bold,
                                 color: isDark ? Colors.white : const Color(0xFF1A202C),
                               ),
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
                             ),
-                            const SizedBox(height: 4),
+                            SizedBox(height: isVerySmallScreen ? 2 : 4),
                             Text(
                               '$_completedCount of $_totalCount completed',
                               style: GoogleFonts.inter(
-                                fontSize: 14,
+                                fontSize: isVerySmallScreen ? 12 : 14,
                                 color: isDark ? Colors.grey[400] : const Color(0xFF718096),
                               ),
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
                             ),
                           ],
                         ),
                       ),
                       if (_totalCount > 0)
                         Container(
-                          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                          padding: EdgeInsets.symmetric(
+                            horizontal: isVerySmallScreen ? 8 : 12,
+                            vertical: isVerySmallScreen ? 4 : 6,
+                          ),
                           decoration: BoxDecoration(
                             color: const Color(0xFF48BB78).withOpacity(0.1),
-                            borderRadius: BorderRadius.circular(20),
+                            borderRadius: BorderRadius.circular(isSmallScreen ? 16 : 20),
                           ),
                           child: Text(
                             '${(_progressPercentage * 100).toInt()}%',
                             style: GoogleFonts.inter(
-                              fontSize: 12,
+                              fontSize: isVerySmallScreen ? 10 : 12,
                               fontWeight: FontWeight.w600,
                               color: const Color(0xFF48BB78),
                             ),
@@ -291,14 +301,14 @@ class _TodoManagerState extends State<TodoManager> {
                     ],
                   ),
                   if (_totalCount > 0) ...[
-                    const SizedBox(height: 16),
+                    SizedBox(height: isVerySmallScreen ? 12 : 16),
                     ClipRRect(
                       borderRadius: BorderRadius.circular(10),
                       child: LinearProgressIndicator(
                         value: _progressPercentage,
                         backgroundColor: isDark ? Colors.grey[700] : const Color(0xFFE2E8F0),
                         valueColor: const AlwaysStoppedAnimation<Color>(Color(0xFF667EEA)),
-                        minHeight: 8,
+                        minHeight: isVerySmallScreen ? 6 : 8,
                       ),
                     ),
                   ],
@@ -306,17 +316,17 @@ class _TodoManagerState extends State<TodoManager> {
               ),
             ),
 
-            // Modern Input Section
+            // ✅ Responsive Input Section
             Container(
-              margin: const EdgeInsets.symmetric(horizontal: 20),
+              margin: EdgeInsets.symmetric(horizontal: isVerySmallScreen ? 12 : (isSmallScreen ? 16 : 20)),
               padding: const EdgeInsets.all(4),
               decoration: BoxDecoration(
                 color: isDark ? const Color(0xFF2D2D2D) : Colors.white,
-                borderRadius: BorderRadius.circular(16),
+                borderRadius: BorderRadius.circular(isSmallScreen ? 12 : 16),
                 boxShadow: [
                   BoxShadow(
                     color: Colors.black.withOpacity(isDark ? 0.2 : 0.05),
-                    blurRadius: 10,
+                    blurRadius: isSmallScreen ? 8 : 10,
                     offset: const Offset(0, 4),
                   ),
                 ],
@@ -325,17 +335,19 @@ class _TodoManagerState extends State<TodoManager> {
                 controller: _todoController,
                 onTaskCreated: _addTodoTask,
                 isDark: isDark,
+                isSmallScreen: isSmallScreen,
+                isVerySmallScreen: isVerySmallScreen,
               ),
             ),
 
-            const SizedBox(height: 20),
+            SizedBox(height: isVerySmallScreen ? 12 : 20),
 
-            // Todo List
+            // ✅ Responsive Todo List
             Expanded(
               child: _todoTasks.isEmpty
-                  ? _buildEmptyState(isDark)
+                  ? _buildEmptyState(isDark, isSmallScreen, isVerySmallScreen)
                   : ListView.builder(
-                      padding: const EdgeInsets.symmetric(horizontal: 20),
+                      padding: EdgeInsets.symmetric(horizontal: isVerySmallScreen ? 12 : (isSmallScreen ? 16 : 20)),
                       itemCount: _todoTasks.length,
                       itemBuilder: (context, index) {
                         final task = _todoTasks[index];
@@ -352,23 +364,31 @@ class _TodoManagerState extends State<TodoManager> {
                             _updateTodoTask(task);
                           },
                           isDark: isDark,
+                          isSmallScreen: isSmallScreen,
+                          isVerySmallScreen: isVerySmallScreen,
                         );
                       },
                     ),
             ),
 
-            // Bottom Actions
+            // ✅ Responsive Bottom Actions
             if (_todoTasks.any((task) => task.isCompleted))
               Container(
-                margin: const EdgeInsets.all(20),
+                margin: EdgeInsets.all(isVerySmallScreen ? 12 : (isSmallScreen ? 16 : 20)),
                 child: ElevatedButton.icon(
                   onPressed: _clearCompletedTasks,
-                  icon: const Icon(Icons.cleaning_services, size: 18),
-                  label: const Text('Clear Completed'),
+                  icon: Icon(Icons.cleaning_services, size: isVerySmallScreen ? 16 : 18),
+                  label: Text(
+                    'Clear Completed',
+                    style: TextStyle(fontSize: isVerySmallScreen ? 13 : 14),
+                  ),
                   style: ElevatedButton.styleFrom(
                     backgroundColor: const Color(0xFFE53E3E),
                     foregroundColor: Colors.white,
-                    padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 12),
+                    padding: EdgeInsets.symmetric(
+                      horizontal: isVerySmallScreen ? 16 : 24,
+                      vertical: isVerySmallScreen ? 8 : 12,
+                    ),
                     shape: RoundedRectangleBorder(
                       borderRadius: BorderRadius.circular(12),
                     ),
@@ -382,41 +402,46 @@ class _TodoManagerState extends State<TodoManager> {
     );
   }
 
-  Widget _buildEmptyState(bool isDark) {
+  Widget _buildEmptyState(bool isDark, bool isSmallScreen, bool isVerySmallScreen) {
     return Center(
-      child: Column(
-        mainAxisAlignment: MainAxisAlignment.center,
-        children: [
-          Container(
-            padding: const EdgeInsets.all(32),
-            decoration: BoxDecoration(
-              color: const Color(0xFF667EEA).withOpacity(0.1),
-              shape: BoxShape.circle,
+      child: Padding(
+        padding: EdgeInsets.all(isVerySmallScreen ? 16 : 24),
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Container(
+              padding: EdgeInsets.all(isVerySmallScreen ? 24 : 32),
+              decoration: BoxDecoration(
+                color: const Color(0xFF667EEA).withOpacity(0.1),
+                shape: BoxShape.circle,
+              ),
+              child: Icon(
+                Icons.checklist,
+                size: isVerySmallScreen ? 48 : 64,
+                color: const Color(0xFF667EEA),
+              ),
             ),
-            child: Icon(
-              Icons.checklist,
-              size: 64,
-              color: const Color(0xFF667EEA),
+            SizedBox(height: isVerySmallScreen ? 16 : 24),
+            Text(
+              'No todos yet',
+              style: GoogleFonts.inter(
+                fontSize: isVerySmallScreen ? 20 : 24,
+                fontWeight: FontWeight.bold,
+                color: isDark ? Colors.white : const Color(0xFF1A202C),
+              ),
+              textAlign: TextAlign.center,
             ),
-          ),
-          const SizedBox(height: 24),
-          Text(
-            'No todos yet',
-            style: GoogleFonts.inter(
-              fontSize: 24,
-              fontWeight: FontWeight.bold,
-              color: isDark ? Colors.white : const Color(0xFF1A202C),
+            SizedBox(height: isVerySmallScreen ? 4 : 8),
+            Text(
+              'Add your first todo to get started',
+              style: GoogleFonts.inter(
+                fontSize: isVerySmallScreen ? 14 : 16,
+                color: isDark ? Colors.grey[400] : const Color(0xFF718096),
+              ),
+              textAlign: TextAlign.center,
             ),
-          ),
-          const SizedBox(height: 8),
-          Text(
-            'Add your first todo to get started',
-            style: GoogleFonts.inter(
-              fontSize: 16,
-              color: isDark ? Colors.grey[400] : const Color(0xFF718096),
-            ),
-          ),
-        ],
+          ],
+        ),
       ),
     );
   }
@@ -427,12 +452,16 @@ class TodoInput extends StatefulWidget {
   final TextEditingController controller;
   final Function(String) onTaskCreated;
   final bool isDark;
+  final bool isSmallScreen;
+  final bool isVerySmallScreen;
 
   const TodoInput({
     super.key,
     required this.controller,
     required this.onTaskCreated,
     required this.isDark,
+    this.isSmallScreen = false,
+    this.isVerySmallScreen = false,
   });
 
   @override
@@ -470,15 +499,15 @@ class _TodoInputState extends State<TodoInput> {
   @override
   Widget build(BuildContext context) {
     return Container(
-      padding: const EdgeInsets.all(8),
+      padding: EdgeInsets.all(widget.isVerySmallScreen ? 6 : 8),
       child: Row(
         children: [
           Container(
-            padding: const EdgeInsets.all(8),
+            padding: EdgeInsets.all(widget.isVerySmallScreen ? 6 : 8),
             child: Icon(
               Icons.add_circle_outline,
               color: _isFocused ? const Color(0xFF667EEA) : Colors.grey[400],
-              size: 24,
+              size: widget.isVerySmallScreen ? 20 : 24,
             ),
           ),
           Expanded(
@@ -486,20 +515,23 @@ class _TodoInputState extends State<TodoInput> {
               controller: widget.controller,
               focusNode: _focusNode,
               style: GoogleFonts.inter(
-                fontSize: 16,
+                fontSize: widget.isVerySmallScreen ? 14 : 16,
                 color: widget.isDark ? Colors.white : const Color(0xFF1A202C),
               ),
               decoration: InputDecoration(
                 hintText: 'Add a new todo...',
                 hintStyle: GoogleFonts.inter(
                   color: Colors.grey[400],
-                  fontSize: 16,
+                  fontSize: widget.isVerySmallScreen ? 14 : 16,
                 ),
                 border: InputBorder.none,
-                contentPadding: const EdgeInsets.symmetric(vertical: 12),
+                contentPadding: EdgeInsets.symmetric(
+                  vertical: widget.isVerySmallScreen ? 8 : 12,
+                ),
               ),
               onSubmitted: (_) => _submitTask(),
               textInputAction: TextInputAction.done,
+              maxLines: 1,
             ),
           ),
           AnimatedContainer(
@@ -507,17 +539,17 @@ class _TodoInputState extends State<TodoInput> {
             child: IconButton(
               onPressed: _submitTask,
               icon: Container(
-                padding: const EdgeInsets.all(8),
+                padding: EdgeInsets.all(widget.isVerySmallScreen ? 6 : 8),
                 decoration: BoxDecoration(
                   gradient: const LinearGradient(
                     colors: [Color(0xFF667EEA), Color(0xFF764BA2)],
                   ),
-                  borderRadius: BorderRadius.circular(12),
+                  borderRadius: BorderRadius.circular(widget.isSmallScreen ? 10 : 12),
                 ),
-                child: const Icon(
+                child: Icon(
                   Icons.arrow_upward,
                   color: Colors.white,
-                  size: 20,
+                  size: widget.isVerySmallScreen ? 16 : 20,
                 ),
               ),
             ),
@@ -536,6 +568,8 @@ class TodoTile extends StatefulWidget {
   final VoidCallback onDelete;
   final Function(String) onEdit;
   final bool isDark;
+  final bool isSmallScreen;
+  final bool isVerySmallScreen;
 
   const TodoTile({
     super.key,
@@ -545,6 +579,8 @@ class TodoTile extends StatefulWidget {
     required this.onDelete,
     required this.onEdit,
     required this.isDark,
+    this.isSmallScreen = false,
+    this.isVerySmallScreen = false,
   });
 
   @override
@@ -585,10 +621,10 @@ class _TodoTileState extends State<TodoTile> with SingleTickerProviderStateMixin
         return Transform.scale(
           scale: _scaleAnimation.value,
           child: Container(
-            margin: const EdgeInsets.only(bottom: 12),
+            margin: EdgeInsets.only(bottom: widget.isVerySmallScreen ? 8 : 12),
             decoration: BoxDecoration(
               color: widget.isDark ? const Color(0xFF2D2D2D) : Colors.white,
-              borderRadius: BorderRadius.circular(16),
+              borderRadius: BorderRadius.circular(widget.isSmallScreen ? 12 : 16),
               border: Border.all(
                 color: widget.task.isCompleted 
                     ? const Color(0xFF48BB78).withOpacity(0.3)
@@ -598,7 +634,7 @@ class _TodoTileState extends State<TodoTile> with SingleTickerProviderStateMixin
               boxShadow: [
                 BoxShadow(
                   color: Colors.black.withOpacity(widget.isDark ? 0.2 : 0.05),
-                  blurRadius: 10,
+                  blurRadius: widget.isSmallScreen ? 8 : 10,
                   offset: const Offset(0, 4),
                 ),
               ],
@@ -606,23 +642,23 @@ class _TodoTileState extends State<TodoTile> with SingleTickerProviderStateMixin
             child: Material(
               color: Colors.transparent,
               child: InkWell(
-                borderRadius: BorderRadius.circular(16),
+                borderRadius: BorderRadius.circular(widget.isSmallScreen ? 12 : 16),
                 onTap: () {
                   _animationController.forward().then((_) {
                     _animationController.reverse();
                   });
                 },
                 child: Padding(
-                  padding: const EdgeInsets.all(16),
+                  padding: EdgeInsets.all(widget.isVerySmallScreen ? 12 : 16),
                   child: Row(
                     children: [
-                      // Custom Checkbox
+                      // ✅ Responsive Custom Checkbox
                       GestureDetector(
                         onTap: widget.onToggle,
                         child: AnimatedContainer(
                           duration: const Duration(milliseconds: 200),
-                          width: 24,
-                          height: 24,
+                          width: widget.isVerySmallScreen ? 20 : 24,
+                          height: widget.isVerySmallScreen ? 20 : 24,
                           decoration: BoxDecoration(
                             color: widget.task.isCompleted 
                                 ? const Color(0xFF48BB78)
@@ -636,23 +672,23 @@ class _TodoTileState extends State<TodoTile> with SingleTickerProviderStateMixin
                             borderRadius: BorderRadius.circular(6),
                           ),
                           child: widget.task.isCompleted
-                              ? const Icon(
+                              ? Icon(
                                   Icons.check,
                                   color: Colors.white,
-                                  size: 16,
+                                  size: widget.isVerySmallScreen ? 12 : 16,
                                 )
                               : null,
                         ),
                       ),
-                      const SizedBox(width: 16),
+                      SizedBox(width: widget.isVerySmallScreen ? 12 : 16),
                       
-                      // Todo Text
+                      // ✅ Responsive Todo Text with Overflow Protection
                       Expanded(
                         child: _isEditing
                             ? TextField(
                                 controller: _editController,
                                 style: GoogleFonts.inter(
-                                  fontSize: 16,
+                                  fontSize: widget.isVerySmallScreen ? 14 : 16,
                                   color: widget.isDark ? Colors.white : const Color(0xFF1A202C),
                                 ),
                                 decoration: const InputDecoration(
@@ -666,6 +702,7 @@ class _TodoTileState extends State<TodoTile> with SingleTickerProviderStateMixin
                                   widget.onEdit(value);
                                 },
                                 autofocus: true,
+                                maxLines: null,
                               )
                             : GestureDetector(
                                 onTap: () {
@@ -676,7 +713,7 @@ class _TodoTileState extends State<TodoTile> with SingleTickerProviderStateMixin
                                 child: AnimatedDefaultTextStyle(
                                   duration: const Duration(milliseconds: 200),
                                   style: GoogleFonts.inter(
-                                    fontSize: 16,
+                                    fontSize: widget.isVerySmallScreen ? 14 : 16,
                                     color: widget.task.isCompleted 
                                         ? Colors.grey[500]
                                         : (widget.isDark ? Colors.white : const Color(0xFF1A202C)),
@@ -686,18 +723,26 @@ class _TodoTileState extends State<TodoTile> with SingleTickerProviderStateMixin
                                   ),
                                   child: Text(
                                     widget.task.text.isEmpty ? 'Tap to edit...' : widget.task.text,
+                                    maxLines: widget.isVerySmallScreen ? 2 : 3,
+                                    overflow: TextOverflow.ellipsis,
+                                    softWrap: true,
                                   ),
                                 ),
                               ),
                       ),
                       
-                      // Delete Button
+                      // ✅ Responsive Delete Button
                       IconButton(
                         onPressed: widget.onDelete,
                         icon: Icon(
                           Icons.delete_outline,
                           color: const Color(0xFFE53E3E).withOpacity(0.7),
-                          size: 20,
+                          size: widget.isVerySmallScreen ? 18 : 20,
+                        ),
+                        padding: EdgeInsets.all(widget.isVerySmallScreen ? 4 : 8),
+                        constraints: BoxConstraints(
+                          minWidth: widget.isVerySmallScreen ? 32 : 40,
+                          minHeight: widget.isVerySmallScreen ? 32 : 40,
                         ),
                       ),
                     ],

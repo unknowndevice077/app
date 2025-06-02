@@ -9,5 +9,6 @@
     "dart.analysisExcludedFolders": [
         ".dart_tool",
         "build"
-    ]
+    ],
+    "redhat.telemetry.enabled": true
 }

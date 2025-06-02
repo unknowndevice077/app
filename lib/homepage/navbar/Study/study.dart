@@ -1,13 +1,13 @@
-import 'package:app/homepage/navbar/Study/quiz/quiz.dart';
+import 'package:app/homepage/navbar/Study/quiz/quiz.dart'; // ✅ ADD THIS
 import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:flutter/cupertino.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'dart:async';
-import 'classtimer.dart';
 import 'topic.dart';
-
+import 'timer.dart';
+import 'ask_ai_screen.dart';
 class Study extends StatefulWidget {
   const Study({super.key});
 
@@ -59,46 +59,55 @@ class _StudyState extends State<Study> with TickerProviderStateMixin {
         totalSeconds += (data['duration'] ?? 0) as int;
       }
 
-      // Get topic count - ONLY count documents that have 'createdAt' field (real topics)
-      // Files have 'addedAt', topics have 'createdAt'
+      // Get ALL documents in topics collection for analysis
       final topicSnapshot = await FirebaseFirestore.instance
           .collection('users')
           .doc(user.uid)
           .collection('Classes')
           .doc(classId)
           .collection('topics')
-          .where('createdAt', isNotEqualTo: null) // Only get documents with createdAt field
           .get();
 
-      // Additional filtering to make sure we only count actual topics
+      // More strict filtering for actual topics
       int actualTopicCount = 0;
+      List<String> invalidDocs = [];
+      
       for (var doc in topicSnapshot.docs) {
         final data = doc.data();
-        // Only count if it has a title field (which topics have, files don't)
-        if (data.containsKey('title') && data['title'] != null) {
+        
+        // A valid topic must have:
+        // 1. A title field that's not null or empty
+        // 2. A createdAt field (topics have this, files have addedAt)
+        // 3. NOT have a fileName field (which files have)
+        bool isValidTopic = data.containsKey('title') && 
+                           data['title'] != null && 
+                           data['title'].toString().trim().isNotEmpty &&
+                           data.containsKey('createdAt') &&
+                           !data.containsKey('fileName') && // Files have this field
+                           !data.containsKey('addedAt'); // Files use addedAt instead of createdAt
+        
+        if (isValidTopic) {
           actualTopicCount++;
+        } else {
+          // Track invalid documents for potential cleanup
+          invalidDocs.add(doc.id);
+          print('Invalid/orphaned document found: ${doc.id} with data: $data');
         }
       }
 
-      // Debug: Print what we're counting
-      print('=== DEBUG: Topics for class $classId ===');
-      print('Raw query result count: ${topicSnapshot.docs.length}');
-      print('Actual topic count: $actualTopicCount');
-      for (var doc in topicSnapshot.docs) {
-        final data = doc.data();
-        print('Doc ID: ${doc.id}');
-        print('Has title: ${data.containsKey('title')}');
-        print('Title: ${data['title']}');
-        print('Has createdAt: ${data.containsKey('createdAt')}');
-        print('Has addedAt: ${data.containsKey('addedAt')}');
-        print('All fields: ${data.keys.toList()}');
-        print('---');
+      // Debug: Print detailed analysis
+      print('=== ENHANCED DEBUG: Topics for class $classId ===');
+      print('Total documents in topics collection: ${topicSnapshot.docs.length}');
+      print('Valid topic count: $actualTopicCount');
+      print('Invalid/orphaned documents: ${invalidDocs.length}');
+      if (invalidDocs.isNotEmpty) {
+        print('Invalid doc IDs: $invalidDocs');
       }
-      print('=== END DEBUG ===');
+      print('=== END ENHANCED DEBUG ===');
 
       return {
         'studyTime': totalSeconds,
-        'topicCount': actualTopicCount, // Use the filtered count
+        'topicCount': actualTopicCount,
       };
     } catch (e) {
       print('Error calculating class stats: $e');
@@ -203,17 +212,21 @@ class _StudyState extends State<Study> with TickerProviderStateMixin {
 
   // Format seconds into readable time
   String _formatStudyTime(int totalSeconds) {
-    if (totalSeconds == 0) return '0m';
+    if (totalSeconds == 0) return '0s';
 
     final hours = totalSeconds ~/ 3600;
     final minutes = (totalSeconds % 3600) ~/ 60;
+    final seconds = totalSeconds % 60;
 
-    if (hours == 0) {
-      return '${minutes}m';
-    } else if (minutes == 0) {
-      return '${hours}h';
-    } else {
+    if (hours > 0) {
+      // Show hour:min format when it reaches an hour
       return '${hours}h ${minutes}m';
+    } else if (minutes > 0) {
+      // Show min:sec format when it's in minutes
+      return '${minutes}m ${seconds}s';
+    } else {
+      // Show just seconds if it hasn't reached a minute yet
+      return '${seconds}s';
     }
   }
 
@@ -224,6 +237,7 @@ class _StudyState extends State<Study> with TickerProviderStateMixin {
     final isTablet = screenWidth > 600;
     final isLargeScreen = screenWidth > 900;
     final isSmallScreen = screenWidth < 400;
+    final isVerySmallScreen = screenWidth < 350; // New breakpoint for very small screens
 
     // Responsive values
     final horizontalPadding = isLargeScreen ? 40.0 : isTablet ? 24.0 : 16.0;
@@ -249,11 +263,7 @@ class _StudyState extends State<Study> with TickerProviderStateMixin {
                 centerTitle: true,
                 title: Text(
                   'Study Hub',
-                  style: GoogleFonts.inter(
-                    fontSize: titleFontSize * 0.6,
-                    fontWeight: FontWeight.w800,
-                    color: Colors.black87,
-                  ),
+                  style: GoogleFonts.dmSerifText(fontSize: 36, color: Colors.black), // ✅ CHANGED FONT
                 ),
                 background: Container(
                   decoration: const BoxDecoration(
@@ -312,7 +322,7 @@ class _StudyState extends State<Study> with TickerProviderStateMixin {
                         LayoutBuilder(
                           builder: (context, constraints) {
                             if (constraints.maxWidth > 600) {
-                              // Tablet/Desktop: Side by side
+                              // Tablet/Desktop: Three cards side by side
                               return Row(
                                 children: [
                                   Expanded(
@@ -327,7 +337,7 @@ class _StudyState extends State<Study> with TickerProviderStateMixin {
                                       onTap: () => _navigateToQuiz(context),
                                     ),
                                   ),
-                                  SizedBox(width: isTablet ? 20.0 : 16.0),
+                                  SizedBox(width: isTablet ? 16.0 : 12.0),
                                   Expanded(
                                     child: _ResponsiveFeatureCard(
                                       title: 'Timer',
@@ -340,10 +350,23 @@ class _StudyState extends State<Study> with TickerProviderStateMixin {
                                       onTap: () => _navigateToTimer(context),
                                     ),
                                   ),
+                                  SizedBox(width: isTablet ? 16.0 : 12.0),
+                                  Expanded(
+                                    child: _ResponsiveFeatureCard(
+                                      title: 'Ask AI',
+                                      subtitle: 'Get Help',
+                                      icon: Icons.psychology_outlined,
+                                      gradient: const LinearGradient(
+                                        colors: [Color(0xFF8B5CF6), Color(0xFF7C3AED)],
+                                      ),
+                                      screenSize: screenSize,
+                                      onTap: () => _navigateToAskAI(context),
+                                    ),
+                                  ),
                                 ],
                               );
                             } else {
-                              // Mobile: Stacked
+                              // Mobile: Stacked cards
                               return Column(
                                 children: [
                                   _ResponsiveFeatureCard(
@@ -366,6 +389,17 @@ class _StudyState extends State<Study> with TickerProviderStateMixin {
                                     ),
                                     screenSize: screenSize,
                                     onTap: () => _navigateToTimer(context),
+                                  ),
+                                  const SizedBox(height: 16),
+                                  _ResponsiveFeatureCard(
+                                    title: 'Ask AI',
+                                    subtitle: 'Get Help',
+                                    icon: Icons.psychology_outlined,
+                                    gradient: const LinearGradient(
+                                      colors: [Color(0xFF8B5CF6), Color(0xFF7C3AED)],
+                                    ),
+                                    screenSize: screenSize,
+                                    onTap: () => _navigateToAskAI(context),
                                   ),
                                 ],
                               );
@@ -427,7 +461,7 @@ class _StudyState extends State<Study> with TickerProviderStateMixin {
                                 fontWeight: FontWeight.w600,
                                 color: const Color(0xFF3B82F6),
                               ),
-                            ),
+                            )
                           );
                         },
                       ),
@@ -566,11 +600,26 @@ class _StudyState extends State<Study> with TickerProviderStateMixin {
     Navigator.push(
       context,
       PageRouteBuilder(
-        pageBuilder: (context, animation, secondaryAnimation) => ClassTimer(
-          classId: '', // TODO: Provide appropriate classId
-          topicId: '', // TODO: Provide appropriate topicId
-          topicTitle: '', // TODO: Provide appropriate topicTitle
+        pageBuilder: (context, animation, secondaryAnimation) => StudyTimerPage(
+          // Remove the parameters since timer.dart doesn't need them
         ),
+        transitionsBuilder: (context, animation, secondaryAnimation, child) {
+          return SlideTransition(
+            position: animation.drive(
+              Tween(begin: const Offset(1.0, 0.0), end: Offset.zero),
+            ),
+            child: child,
+          );
+        },
+      ),
+    );
+  }
+
+  void _navigateToAskAI(BuildContext context) {
+    Navigator.push(
+      context,
+      PageRouteBuilder(
+        pageBuilder: (context, animation, secondaryAnimation) => AskAiScreen(),
         transitionsBuilder: (context, animation, secondaryAnimation, child) {
           return SlideTransition(
             position: animation.drive(
@@ -605,12 +654,22 @@ class _ModernClassCard extends StatelessWidget {
   });
 
   String _formatStudyTime(int totalSeconds) {
-    if (totalSeconds == 0) return '0m';
+    if (totalSeconds == 0) return '0s';
+
     final hours = totalSeconds ~/ 3600;
     final minutes = (totalSeconds % 3600) ~/ 60;
-    if (hours == 0) return '${minutes}m';
-    if (minutes == 0) return '${hours}h';
-    return '${hours}h ${minutes}m';
+    final seconds = totalSeconds % 60;
+
+    if (hours > 0) {
+      // Show hour:min format when it reaches an hour
+      return '${hours}h ${minutes}m';
+    } else if (minutes > 0) {
+      // Show min:sec format when it's in minutes
+      return '${minutes}m ${seconds}s';
+    } else {
+      // Show just seconds if it hasn't reached a minute yet
+      return '${seconds}s';
+    }
   }
 
   @override
@@ -1175,4 +1234,46 @@ class _ResponsiveEmptyState extends StatelessWidget {
       ),
     );
   }
+}
+
+Widget _buildQuickActionButton(
+  BuildContext context, {
+  required IconData icon,
+  required String label,
+  required VoidCallback onTap,
+  required bool isSmallScreen,
+}) {
+  return InkWell(
+    onTap: onTap,
+    borderRadius: BorderRadius.circular(16),
+    child: Container(
+      padding: EdgeInsets.symmetric(
+        horizontal: isSmallScreen ? 12 : 16,
+        vertical: isSmallScreen ? 8 : 12,
+      ),
+      decoration: BoxDecoration(
+        color: Colors.blue.shade50,
+        borderRadius: BorderRadius.circular(16),
+      ),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(
+            icon,
+            size: isSmallScreen ? 24 : 28,
+            color: Colors.blue.shade700,
+          ),
+          SizedBox(height: isSmallScreen ? 4 : 8),
+          Text(
+            label,
+            style: TextStyle(
+              fontSize: isSmallScreen ? 12 : 14,
+              fontWeight: FontWeight.w500,
+              color: Colors.blue.shade700,
+            ),
+          ),
+        ],
+      ),
+    ),
+  );
 }

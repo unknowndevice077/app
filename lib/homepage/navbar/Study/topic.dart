@@ -280,8 +280,8 @@ class _TopicScreenState extends State<TopicScreen> with TickerProviderStateMixin
       PageRouteBuilder(
         pageBuilder: (context, animation, secondaryAnimation) => ClassTimer(
           classId: widget.classId,
-          topicId: '', // Provide the appropriate topicId here
-          topicTitle: '', // Provide the appropriate topicTitle here
+          topicId: '', // You can pass a specific topicId if needed
+          topicTitle: widget.classTitle, // Pass the class title
         ),
         transitionsBuilder: (context, animation, secondaryAnimation, child) {
           return SlideTransition(
@@ -331,7 +331,9 @@ class _TopicScreenState extends State<TopicScreen> with TickerProviderStateMixin
         final user = FirebaseAuth.instance.currentUser;
         if (user == null) return;
 
-        // Delete all files in this topic first
+        print('=== DELETING TOPIC: $topicId ===');
+
+        // First, delete all files in this topic
         final filesSnapshot = await FirebaseFirestore.instance
             .collection('users')
             .doc(user.uid)
@@ -342,24 +344,33 @@ class _TopicScreenState extends State<TopicScreen> with TickerProviderStateMixin
             .collection('files')
             .get();
 
+        print('Found ${filesSnapshot.docs.length} files to delete');
+
         // Delete all file documents
         final batch = FirebaseFirestore.instance.batch();
         for (var doc in filesSnapshot.docs) {
+          print('Deleting file: ${doc.id}');
           batch.delete(doc.reference);
         }
 
-        // Delete the topic document
-        batch.delete(
-          FirebaseFirestore.instance
-              .collection('users')
-              .doc(user.uid)
-              .collection('Classes')
-              .doc(widget.classId)
-              .collection('topics')
-              .doc(topicId),
-        );
+        // Delete the topic document itself
+        final topicRef = FirebaseFirestore.instance
+            .collection('users')
+            .doc(user.uid)
+            .collection('Classes')
+            .doc(widget.classId)
+            .collection('topics')
+            .doc(topicId);
+      
+        print('Deleting topic document: $topicId');
+        batch.delete(topicRef);
 
         await batch.commit();
+        print('Batch delete completed');
+
+        // Run cleanup to remove any orphaned documents
+        print('Running cleanup after deletion...');
+        await _cleanupInvalidDocuments();
 
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
@@ -380,6 +391,7 @@ class _TopicScreenState extends State<TopicScreen> with TickerProviderStateMixin
         }
       }
     } catch (e) {
+      print('Error deleting topic: $e');
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
@@ -387,13 +399,118 @@ class _TopicScreenState extends State<TopicScreen> with TickerProviderStateMixin
               children: [
                 Icon(Icons.error, color: Colors.white, size: 20),
                 SizedBox(width: 12),
-                Text('Error deleting topic'),
+                Text('Error deleting topic: $e'),
               ],
             ),
             backgroundColor: Colors.red,
             behavior: SnackBarBehavior.floating,
             shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
             margin: EdgeInsets.all(16),
+          ),
+        );
+      }
+    }
+  }
+
+  // Add this method to _TopicScreenState class
+  Future<void> _cleanupInvalidDocuments() async {
+    try {
+      final user = FirebaseAuth.instance.currentUser;
+      if (user == null) {
+        print('No user found for cleanup');
+        return;
+      }
+
+      print('Starting cleanup for class: ${widget.classId}');
+
+      final snapshot = await FirebaseFirestore.instance
+          .collection('users')
+          .doc(user.uid)
+          .collection('Classes')
+          .doc(widget.classId)
+          .collection('topics')
+          .get();
+
+      print('Found ${snapshot.docs.length} total documents in topics collection');
+
+      final batch = FirebaseFirestore.instance.batch();
+      int deleteCount = 0;
+      int validTopicCount = 0;
+      List<Map<String, dynamic>> analysis = [];
+
+      for (var doc in snapshot.docs) {
+        final data = doc.data();
+        
+        // Detailed analysis of each document
+        bool hasTitle = data.containsKey('title') && data['title'] != null && data['title'].toString().trim().isNotEmpty;
+        bool hasCreatedAt = data.containsKey('createdAt');
+        bool hasFileName = data.containsKey('fileName');
+        bool hasName = data.containsKey('name');
+        bool hasPath = data.containsKey('path');
+        bool hasAddedAt = data.containsKey('addedAt');
+        
+        bool isValidTopic = hasTitle && hasCreatedAt && !hasFileName && !hasPath && !hasAddedAt;
+        
+        analysis.add({
+          'docId': doc.id,
+          'data': data,
+          'hasTitle': hasTitle,
+          'hasCreatedAt': hasCreatedAt,
+          'hasFileName': hasFileName,
+          'hasName': hasName,
+          'hasPath': hasPath,
+          'hasAddedAt': hasAddedAt,
+          'isValidTopic': isValidTopic,
+        });
+        
+        if (isValidTopic) {
+          validTopicCount++;
+          print('✅ Valid topic: ${doc.id} - "${data['title']}"');
+        } else {
+          print('❌ Invalid document: ${doc.id}');
+          print('   Data: $data');
+          print('   Reason: ${!hasTitle ? 'No title' : !hasCreatedAt ? 'No createdAt' : hasFileName ? 'Has fileName' : hasPath ? 'Has path' : 'Has addedAt'}');
+          
+          batch.delete(doc.reference);
+          deleteCount++;
+        }
+      }
+
+      print('=== CLEANUP SUMMARY ===');
+      print('Total documents: ${snapshot.docs.length}');
+      print('Valid topics: $validTopicCount');
+      print('Invalid documents to delete: $deleteCount');
+
+      if (deleteCount > 0) {
+        await batch.commit();
+        print('✅ Successfully deleted $deleteCount invalid documents');
+        
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text('Cleaned up $deleteCount invalid documents'),
+              backgroundColor: Colors.green,
+            ),
+          );
+        }
+      } else {
+        print('✅ No invalid documents found');
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text('Database is clean - no invalid documents found'),
+              backgroundColor: Colors.blue,
+            ),
+          );
+        }
+      }
+    } catch (e) {
+      print('❌ Error during cleanup: $e');
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Error during cleanup: $e'),
+            backgroundColor: Colors.red,
           ),
         );
       }
@@ -591,6 +708,30 @@ class _TopicScreenState extends State<TopicScreen> with TickerProviderStateMixin
                             .snapshots(),
                         builder: (context, snapshot) {
                           if (!snapshot.hasData) return const SizedBox();
+                          
+                          // Filter to count only valid topics, not files
+                          int validTopicCount = 0;
+                          for (var doc in snapshot.data!.docs) {
+                            final data = doc.data() as Map<String, dynamic>;
+                            
+                            // A valid topic should have:
+                            // 1. A title field
+                            // 2. A createdAt field
+                            // 3. NOT have file-specific fields
+                            bool isValidTopic = data.containsKey('title') && 
+                                               data['title'] != null && 
+                                               data['title'].toString().trim().isNotEmpty &&
+                                               data.containsKey('createdAt') &&
+                                               !data.containsKey('fileName') && // Files have this
+                                               !data.containsKey('name') && // Files might have this instead of title
+                                               !data.containsKey('path') && // Files have this
+                                               !data.containsKey('addedAt'); // Files use this instead of createdAt
+                            
+                            if (isValidTopic) {
+                              validTopicCount++;
+                            }
+                          }
+                          
                           return Container(
                             padding: EdgeInsets.symmetric(
                               horizontal: isTablet ? 16 : 12,
@@ -601,7 +742,7 @@ class _TopicScreenState extends State<TopicScreen> with TickerProviderStateMixin
                               borderRadius: BorderRadius.circular(20),
                             ),
                             child: Text(
-                              '${snapshot.data!.docs.length}',
+                              '$validTopicCount',
                               style: GoogleFonts.inter(
                                 fontSize: isTablet ? 14 : 12,
                                 fontWeight: FontWeight.w600,
@@ -1222,6 +1363,236 @@ class _TopicDetailScreenState extends State<TopicDetailScreen> {
         );
       }
     }
+  }
+
+  // Add this method to _TopicDetailScreenState class
+  Future<void> _renameTopic() async {
+  String newTitle = widget.topicData['title'] ?? '';
+  String newDescription = widget.topicData['description'] ?? '';
+
+  final result = await showModalBottomSheet<Map<String, String>>(
+    context: context,
+    isScrollControlled: true,
+    backgroundColor: Colors.transparent,
+    builder: (context) {
+      final isTablet = MediaQuery.of(context).size.width > 600;
+      final titleController = TextEditingController(text: newTitle);
+      final descriptionController = TextEditingController(text: newDescription);
+
+      return Container(
+        padding: EdgeInsets.only(
+          bottom: MediaQuery.of(context).viewInsets.bottom + 20,
+          top: 20,
+          left: 20,
+          right: 20,
+        ),
+        decoration: const BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+        ),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            // Handle bar
+            Center(
+              child: Container(
+                width: 40,
+                height: 4,
+                decoration: BoxDecoration(
+                  color: Colors.grey[300],
+                  borderRadius: BorderRadius.circular(2),
+                ),
+              ),
+            ),
+            const SizedBox(height: 24),
+            
+            // Title
+            Text(
+              'Rename Topic',
+              style: GoogleFonts.inter(
+                fontSize: isTablet ? 28 : 24,
+                fontWeight: FontWeight.w700,
+                color: Colors.black87,
+              ),
+            ),
+            const SizedBox(height: 8),
+            Text(
+              'Update the topic name and description',
+              style: GoogleFonts.inter(
+                fontSize: isTablet ? 16 : 14,
+                color: Colors.grey[600],
+              ),
+            ),
+            const SizedBox(height: 32),
+
+            // Topic title field
+            TextField(
+              controller: titleController,
+              style: GoogleFonts.inter(fontSize: isTablet ? 16 : 14),
+              decoration: InputDecoration(
+                labelText: 'Topic Title',
+                hintText: 'Enter topic name',
+                filled: true,
+                fillColor: Colors.grey[50],
+                border: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(16),
+                  borderSide: BorderSide.none,
+                ),
+                focusedBorder: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(16),
+                  borderSide: BorderSide(color: widget.classColor, width: 2),
+                ),
+                contentPadding: EdgeInsets.symmetric(
+                  horizontal: isTablet ? 20 : 16,
+                  vertical: isTablet ? 20 : 16,
+                ),
+              ),
+            ),
+            const SizedBox(height: 20),
+
+            // Description field
+            TextField(
+              controller: descriptionController,
+              maxLines: 3,
+              style: GoogleFonts.inter(fontSize: isTablet ? 16 : 14),
+              decoration: InputDecoration(
+                labelText: 'Description (Optional)',
+                hintText: 'Brief description of the topic',
+                filled: true,
+                fillColor: Colors.grey[50],
+                border: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(16),
+                  borderSide: BorderSide.none,
+                ),
+                focusedBorder: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(16),
+                  borderSide: BorderSide(color: widget.classColor, width: 2),
+                ),
+                contentPadding: EdgeInsets.symmetric(
+                  horizontal: isTablet ? 20 : 16,
+                  vertical: isTablet ? 20 : 16,
+                ),
+              ),
+            ),
+            const SizedBox(height: 32),
+
+            // Buttons
+            Row(
+              children: [
+                Expanded(
+                  child: TextButton(
+                    onPressed: () => Navigator.pop(context),
+                    style: TextButton.styleFrom(
+                      padding: EdgeInsets.symmetric(vertical: isTablet ? 16 : 14),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                    ),
+                    child: Text(
+                      'Cancel',
+                      style: GoogleFonts.inter(
+                        fontSize: isTablet ? 16 : 14,
+                        fontWeight: FontWeight.w600,
+                        color: Colors.grey[600],
+                      ),
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 16),
+                Expanded(
+                  flex: 2,
+                  child: ElevatedButton(
+                    onPressed: () {
+                      final title = titleController.text.trim();
+                      if (title.isNotEmpty) {
+                        Navigator.pop(context, {
+                          'title': title,
+                          'description': descriptionController.text.trim(),
+                        });
+                      }
+                    },
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: widget.classColor,
+                      foregroundColor: Colors.white,
+                      padding: EdgeInsets.symmetric(vertical: isTablet ? 16 : 14),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                      elevation: 0,
+                    ),
+                    child: Text(
+                      'Update Topic',
+                      style: GoogleFonts.inter(
+                        fontSize: isTablet ? 16 : 14,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ],
+        ),
+      );
+    },
+  );
+
+  if (result != null) {
+    try {
+      final user = FirebaseAuth.instance.currentUser;
+      if (user == null) return;
+
+      await FirebaseFirestore.instance
+          .collection('users')
+          .doc(user.uid)
+          .collection('Classes')
+          .doc(widget.classId)
+          .collection('topics')
+          .doc(widget.topicId)
+          .update({
+        'title': result['title']!,
+        'description': result['description']!,
+        'lastUpdated': FieldValue.serverTimestamp(),
+      });
+
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Row(
+              children: [
+                Icon(Icons.check_circle, color: Colors.white, size: 20),
+                const SizedBox(width: 12),
+                Text('Topic renamed successfully'),
+              ],
+            ),
+            backgroundColor: Colors.green,
+            behavior: SnackBarBehavior.floating,
+            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+            margin: const EdgeInsets.all(16),
+          ),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Row(
+              children: [
+                Icon(Icons.error, color: Colors.white, size: 20),
+                const SizedBox(width: 12),
+                Text('Error renaming topic'),
+              ],
+            ),
+            backgroundColor: Colors.red,
+            behavior: SnackBarBehavior.floating,
+            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+            margin: const EdgeInsets.all(16),
+          ),
+        );
+      }
+    }
+  }
   }
 
   @override

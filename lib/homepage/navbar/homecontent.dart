@@ -60,34 +60,71 @@ class _HomecontentState extends State<Homecontent> {
   Future<void> _fetchTotalStudyHours() async {
     try {
       double totalHours = 0.0;
-      final statisticsSnapshot =
-          await FirebaseFirestore.instance
-              .collection('users')
-              .doc(uid)
-              .collection('STATISTICS')
-              .get();
+
+      // 1. Get data from STATISTICS collection (general timer sessions)
+      final statisticsSnapshot = await FirebaseFirestore.instance
+          .collection('users')
+          .doc(uid)
+          .collection('STATISTICS')
+          .get();
 
       if (statisticsSnapshot.docs.isNotEmpty) {
         for (var doc in statisticsSnapshot.docs) {
           final data = doc.data();
+          
+          // Handle different duration formats in STATISTICS
+          if (data.containsKey('minutesStudied') && data['minutesStudied'] != null) {
+            totalHours += (data['minutesStudied'] as num).toDouble() / 60.0;
+          }
+          if (data.containsKey('secondsStudied') && data['secondsStudied'] != null) {
+            totalHours += (data['secondsStudied'] as num).toDouble() / 3600.0;
+          }
+          if (data.containsKey('duration') && data['duration'] != null) {
+            // Duration is in seconds
+            totalHours += (data['duration'] as num).toDouble() / 3600.0;
+          }
+          // Legacy support for old formats
           if (data.containsKey('hours') && data['hours'] != null) {
             totalHours += (data['hours'] as num).toDouble();
           }
           if (data.containsKey('minutes') && data['minutes'] != null) {
             totalHours += (data['minutes'] as num).toDouble() / 60.0;
           }
+        }
+      }
+
+      // 2. Get data from ClassTimerSessions (class-specific timer sessions)
+      final classesSnapshot = await FirebaseFirestore.instance
+          .collection('users')
+          .doc(uid)
+          .collection('Classes')
+          .get();
+
+      for (var classDoc in classesSnapshot.docs) {
+        final classTimerSnapshot = await FirebaseFirestore.instance
+            .collection('users')
+            .doc(uid)
+            .collection('Classes')
+            .doc(classDoc.id)
+            .collection('ClassTimerSessions')
+            .get();
+
+        for (var sessionDoc in classTimerSnapshot.docs) {
+          final data = sessionDoc.data();
           if (data.containsKey('duration') && data['duration'] != null) {
-            totalHours +=
-                (data['duration'] as num).toDouble() / (1000 * 60 * 60);
+            // Duration is in seconds, convert to hours
+            totalHours += (data['duration'] as num).toDouble() / 3600.0;
           }
         }
-      } else {
-        final studySessionsSnapshot =
-            await FirebaseFirestore.instance
-                .collection('users')
-                .doc(uid)
-                .collection('StudySessions')
-                .get();
+      }
+
+      // 3. Fallback: Check legacy StudySessions collection if no data found
+      if (totalHours == 0.0) {
+        final studySessionsSnapshot = await FirebaseFirestore.instance
+            .collection('users')
+            .doc(uid)
+            .collection('StudySessions')
+            .get();
 
         for (var doc in studySessionsSnapshot.docs) {
           final data = doc.data();
@@ -110,6 +147,12 @@ class _HomecontentState extends State<Homecontent> {
           _totalStudyHours = totalHours;
         });
       }
+
+      print('=== TOTAL STUDY TIME DEBUG ===');
+      print('Total hours calculated: $totalHours');
+      print('Total seconds: ${(totalHours * 3600).round()}');
+      print('==============================');
+
     } catch (e) {
       print('Error fetching total study hours: $e');
     }
@@ -1155,8 +1198,13 @@ class _StatsCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    int hours = value.floor();
-    int minutes = ((value - hours) * 60).round();
+    // Convert total hours to total seconds for more precise formatting
+    int totalSeconds = (value * 3600).round();
+    
+    // Calculate hours, minutes, and seconds
+    int hours = totalSeconds ~/ 3600;
+    int minutes = (totalSeconds % 3600) ~/ 60;
+    int seconds = totalSeconds % 60;
 
     return Container(
       margin: const EdgeInsets.symmetric(horizontal: 12),
@@ -1188,46 +1236,116 @@ class _StatsCard extends StatelessWidget {
               ),
               const SizedBox(height: 8),
               if (isHours) ...[
-                Row(
-                  crossAxisAlignment: CrossAxisAlignment.baseline,
-                  textBaseline: TextBaseline.alphabetic,
-                  children: [
-                    Text(
-                      '$hours',
-                      style: TextStyle(
-                        fontSize: 32,
-                        fontWeight: FontWeight.bold,
-                        color: Colors.black,
-                        letterSpacing: 1.2,
+                if (hours > 0) ...[
+                  // Show hour:min format when it reaches an hour
+                  Row(
+                    crossAxisAlignment: CrossAxisAlignment.baseline,
+                    textBaseline: TextBaseline.alphabetic,
+                    children: [
+                      Text(
+                        '$hours',
+                        style: TextStyle(
+                          fontSize: 32,
+                          fontWeight: FontWeight.bold,
+                          color: Colors.black,
+                          letterSpacing: 1.2,
+                        ),
                       ),
-                    ),
-                    Text(
-                      'h ',
-                      style: TextStyle(
-                        fontSize: 18,
-                        color: Colors.grey[700],
-                        fontWeight: FontWeight.w600,
+                      Text(
+                        'h ',
+                        style: TextStyle(
+                          fontSize: 18,
+                          color: Colors.grey[700],
+                          fontWeight: FontWeight.w600,
+                        ),
                       ),
-                    ),
-                    Text(
-                      minutes.toString().padLeft(2, '0'),
-                      style: TextStyle(
-                        fontSize: 32,
-                        fontWeight: FontWeight.bold,
-                        color: Colors.black,
-                        letterSpacing: 1.2,
+                      Text(
+                        minutes.toString().padLeft(2, '0'),
+                        style: TextStyle(
+                          fontSize: 32,
+                          fontWeight: FontWeight.bold,
+                          color: Colors.black,
+                          letterSpacing: 1.2,
+                        ),
                       ),
-                    ),
-                    Text(
-                      'm',
-                      style: TextStyle(
-                        fontSize: 18,
-                        color: Colors.grey[700],
-                        fontWeight: FontWeight.w600,
+                      Text(
+                        'm',
+                        style: TextStyle(
+                          fontSize: 18,
+                          color: Colors.grey[700],
+                          fontWeight: FontWeight.w600,
+                        ),
                       ),
-                    ),
-                  ],
-                ),
+                    ],
+                  ),
+                ] else if (minutes > 0) ...[
+                  // Show min:sec format when it's in minutes
+                  Row(
+                    crossAxisAlignment: CrossAxisAlignment.baseline,
+                    textBaseline: TextBaseline.alphabetic,
+                    children: [
+                      Text(
+                        '$minutes',
+                        style: TextStyle(
+                          fontSize: 32,
+                          fontWeight: FontWeight.bold,
+                          color: Colors.black,
+                          letterSpacing: 1.2,
+                        ),
+                      ),
+                      Text(
+                        'm ',
+                        style: TextStyle(
+                          fontSize: 18,
+                          color: Colors.grey[700],
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                      Text(
+                        seconds.toString().padLeft(2, '0'),
+                        style: TextStyle(
+                          fontSize: 32,
+                          fontWeight: FontWeight.bold,
+                          color: Colors.black,
+                          letterSpacing: 1.2,
+                        ),
+                      ),
+                      Text(
+                        's',
+                        style: TextStyle(
+                          fontSize: 18,
+                          color: Colors.grey[700],
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                    ],
+                  ),
+                ] else ...[
+                  // Show just seconds if it hasn't reached a minute yet
+                  Row(
+                    crossAxisAlignment: CrossAxisAlignment.baseline,
+                    textBaseline: TextBaseline.alphabetic,
+                    children: [
+                      Text(
+                        '$seconds',
+                        style: TextStyle(
+                          fontSize: 32,
+                          fontWeight: FontWeight.bold,
+                          color: Colors.black,
+                          letterSpacing: 1.2,
+                        ),
+                      ),
+                      Text(
+                        's',
+                        style: TextStyle(
+                          fontSize: 18,
+                          color: Colors.grey[700],
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                    ],
+                  ),
+                ],
               ] else ...[
                 Text(
                   '${value.toInt()}',
@@ -1241,7 +1359,13 @@ class _StatsCard extends StatelessWidget {
               ],
               const SizedBox(height: 4),
               Text(
-                isHours ? "Total Hours" : "Total Hours",
+                isHours 
+                    ? (hours > 0 
+                        ? "Total Time" 
+                        : minutes > 0 
+                            ? "Total Time" 
+                            : "Total Time")
+                    : "Total Items",
                 style: TextStyle(
                   fontSize: 13,
                   color: Colors.grey[500],

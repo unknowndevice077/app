@@ -47,7 +47,7 @@ dependencies:
   sqflite: ^2.3.2
   flutter_sound: ^9.2.13 # For audio recording
   flutter_local_notifications: ^17.2.2
-  timezone: ^0.9.0
+  timezone: ^0.9.4
   permission_handler: ^11.3.1
   http: ^1.2.1
   firebase_ai: ^2.0.0
@@ -94,6 +94,7 @@ flutter:
     - assets/images/
     - assets/images/avatars/
     - assets/alarms/
+    # ✅ For custom notification sounds if needed
     #   - images/a_dot_ham.jpeg
 
   # An image asset can refer to one or more resolution-specific "variants", see
